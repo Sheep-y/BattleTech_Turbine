@@ -23,12 +23,13 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static Type dmType;
       private static MessageCenter center;
       private static Dictionary<string, DataManager.DataManagerLoadRequest> foreground, background;
-      private static HashSet<DataManager.DataManagerLoadRequest> foregroundLoading, backgroundLoading;
+      private static HashSet<DataManager.DataManagerLoadRequest> foregroundLoading;
       private static float currentTimeout = -1, currentAsyncTimeout = -1;
 
       public override void ModStarts () {
-         //Logger.Delete();
-         //Logger = Logger.BT_LOG;
+         // A pretty safe patch that disables invalid or immediately duplicating complete messages.
+         Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, "Skip_DuplicateRequestCompleteMessage" );
+
          dmType = typeof( DataManager );
          backgroundRequestsCurrentAllowedWeight = dmType.GetField( "backgroundRequestsCurrentAllowedWeight", NonPublic | Instance );
          foregroundRequestsCurrentAllowedWeight = dmType.GetField( "foregroundRequestsCurrentAllowedWeight", NonPublic | Instance );
@@ -58,10 +59,10 @@ namespace Sheepy.BattleTechMod.Turbine {
          foreground = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          background = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          foregroundLoading = new HashSet<DataManager.DataManagerLoadRequest>();
-         backgroundLoading = new HashSet<DataManager.DataManagerLoadRequest>();
          UnpatchManager = false;
          Log( "Turbine initialised" );
-         /*
+
+         /* // Code to patch all resource load requests. Good luck with it.
          Type ReqType = typeof( DataManager.ResourceLoadRequest<> );
          // I _hope_ I got everything in the primary assembly.  Not going to check the whole game!
          foreach ( Type nested in typeof( DataManager ).GetNestedTypes( Harmony.AccessTools.all ).Where( e => IsSubclassOfRawGeneric( e, ReqType ) ) ) {
@@ -69,14 +70,13 @@ namespace Sheepy.BattleTechMod.Turbine {
             Patch( nested, "Load", "LoadStart", "LoadEnd" );
          }
          */
-         Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, "Skip_DuplicateRequestCompleteMessage" );
          if ( HackMechDefDependencyCheck ) {
             Patch( typeof( MechDef ), "CheckDependenciesAfterLoad", "Skip_CheckDependenciesAfterLoad", "Cleanup_CheckDependenciesAfterLoad" );
             Patch( typeof( MechDef ), "RequestDependencies", "StartLogMechDefDependencies", "StopLogMechDefDependencies" );
          }
       }
 
-      // https://stackoverflow.com/a/457708/893578 by JaredPar
+      /* // Code to test ResourceLoadRequest subclass. https://stackoverflow.com/a/457708/893578 by JaredPar
       private static bool IsSubclassOfRawGeneric(Type toCheck, Type generic) {
          while ( toCheck != null && toCheck != typeof(object) ) {
             var cur = toCheck.IsGenericType ? toCheck.GetGenericTypeDefinition() : toCheck;
@@ -84,12 +84,11 @@ namespace Sheepy.BattleTechMod.Turbine {
             toCheck = toCheck.BaseType;
          }
          return false;
-      }
+      } /**/
 
       private static string lastMessage;
 
       private static void Skip_DuplicateRequestCompleteMessage ( DataManagerRequestCompleteMessage __instance ) {
-         if ( UnpatchManager ) return;
          if ( String.IsNullOrEmpty( __instance.ResourceId ) ) {
             __instance.hasBeenPublished = true; // Skip publishing empty id
             return;
@@ -162,7 +161,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          /**/
          return done;
       }
-      private static bool CheckAsyncRequestsComplete () { return backgroundLoading.All( IsComplete ); }
+      private static bool CheckAsyncRequestsComplete () { return background.Values.All( IsComplete ); }
       private static bool IsComplete ( DataManager.DataManagerLoadRequest e ) { return e.IsComplete(); }
 
       private static HBS.Logging.ILog logger;
@@ -184,7 +183,6 @@ namespace Sheepy.BattleTechMod.Turbine {
          foreground.Clear();
          background.Clear();
          foregroundLoading.Clear();
-         backgroundLoading.Clear();
          mechDefDependency.Clear();
          mechDefLookup.Clear();
          manager = __instance;
@@ -205,7 +203,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          dataManagerLoadRequest.ResetRequestState();
          background.Remove( key );
          foreground.Add( key, dataManagerLoadRequest );
-         if ( backgroundLoading.Remove( dataManagerLoadRequest ) )
+         if ( ! dataManagerLoadRequest.IsComplete() )
             foregroundLoading.Add( dataManagerLoadRequest );
          bool wasLoadingAsync = (bool) isLoadingAsync.GetValue( me );
          bool nowLoadingAsync = ! CheckAsyncRequestsComplete();
@@ -214,7 +212,6 @@ namespace Sheepy.BattleTechMod.Turbine {
             if ( wasLoadingAsync ) {
                SaveCache.Invoke( me, null );
                background.Clear();
-               backgroundLoading.Clear();
                center.PublishMessage( new DataManagerAsyncLoadCompleteMessage() );
             }
          }
@@ -275,13 +272,10 @@ namespace Sheepy.BattleTechMod.Turbine {
             pre.Remove( request.Prewarm );
          }
          //Log( "Done Async: " + GetKey( request ) );
-         if ( request.IsComplete() )
-            backgroundLoading.Remove( request );
          if ( CheckAsyncRequestsComplete() ) {
             isLoadingAsync.SetValue( me, false );
             SaveCache.Invoke( me, null );
             background.Clear();
-            backgroundLoading.Clear();
             center.PublishMessage( new DataManagerAsyncLoadCompleteMessage() );
          }
       }
@@ -418,8 +412,6 @@ namespace Sheepy.BattleTechMod.Turbine {
             dataManagerLoadRequest.SetAsync( true );
             //Log( "Queue Async: " + GetKey( dataManagerLoadRequest ) + " = " + dataManagerLoadRequest.GetType() + " @ " + dataManagerLoadRequest.IsComplete() );
             background.Add( key, dataManagerLoadRequest );
-            if ( ! dataManagerLoadRequest.IsComplete() )
-               backgroundLoading.Add( dataManagerLoadRequest );
          }
          return false;
       }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
@@ -471,7 +463,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          foreach ( DataManager.DataManagerLoadRequest dataManagerLoadRequest in foregroundLoading )
             if ( foregroundRequestWeight > dataManagerLoadRequest.RequestWeight.AllowedWeight )
                dataManagerLoadRequest.RequestWeight.SetAllowedWeight( foregroundRequestWeight );
-         foreach ( DataManager.DataManagerLoadRequest dataManagerLoadRequest in backgroundLoading )
+         foreach ( DataManager.DataManagerLoadRequest dataManagerLoadRequest in background.Values )
             if ( backgroundRequestWeight > dataManagerLoadRequest.RequestWeight.AllowedWeight )
                dataManagerLoadRequest.RequestWeight.SetAllowedWeight( backgroundRequestWeight );
          return false;
@@ -493,10 +485,10 @@ namespace Sheepy.BattleTechMod.Turbine {
                }
             }
          }
-         if ( currentAsyncTimeout >= 0f && backgroundLoading.Count > 0 ) {
+         if ( currentAsyncTimeout >= 0f && background.Count > 0 ) {
             currentAsyncTimeout += deltaTime;
             if ( currentAsyncTimeout > 20f ) {
-               DataManager.DataManagerLoadRequest dataManagerLoadRequest = backgroundLoading.First( IsProcessing );
+               DataManager.DataManagerLoadRequest dataManagerLoadRequest = background.First( IsProcessing );
                if ( dataManagerLoadRequest != null ) {
                   logger.LogWarning( string.Format( "DataManager ASYNC Request for {0} has taken too long. Cancelling request. Your load will probably fail", dataManagerLoadRequest.ResourceId ) );
                   dataManagerLoadRequest.NotifyLoadFailed();
@@ -523,7 +515,6 @@ namespace Sheepy.BattleTechMod.Turbine {
          UnpatchManager = true;
          backgroundRequests.AddRange( background.Values );
          background.Clear();
-         backgroundLoading.Clear();
          foregroundRequests.AddRange( foreground.Values );
          foreground.Clear();
          foregroundLoading.Clear();
