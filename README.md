@@ -1,4 +1,4 @@
-# Turbine 1.0 #
+# Turbine 1.0.1 #
 For BATTLETECH 1.1.2
 
 Turbine is a BattleTech mod that lighten and speed up the game's resource loading.
@@ -11,8 +11,8 @@ If it does not work, your game will crash or hang.  Delete the mod to revert it 
 
 This mod does not modify game data or save games.
 
-GitHub: https://github.com/Sheep-y/BattleTech_Turbine
-
+* GitHub: https://github.com/Sheep-y/BattleTech_Turbine
+* Nexus Mods: https://www.nexusmods.com/battletech/mods/288
 
 # Installation
 
@@ -26,12 +26,12 @@ GitHub: https://github.com/Sheep-y/BattleTech_Turbine
 
 # Compatibility
 
-Turbine is NOT expected to work with any mod that also speed up resource loading, such as WhySoSlow.
+Turbine is not expected to work with mods that also speed up *resource* loading, such as WhySoSlow.
 
 It should otherwise work with all mods, including those that add new files for the game to load.
 
 If it doesn't work for you, you can try to use the debug version which will generate a very detailed log,
-then creates a new issue and attach it.  It will run VERY slow however because of the logging.
+then creates a new issue and attach it.  It may run VERY slow however because of the massive logging.
 
 
 # How It Works
@@ -76,4 +76,4 @@ But its real value is its sensors, installed in all parts, that allow it to log 
 
 * Thanks [Denedan](https://github.com/Denadan) for finding the two original [performance](https://github.com/saltyhotdog/BattletechIssueTracker/issues/14) [issues](https://github.com/saltyhotdog/BattletechIssueTracker/issues/17)
 * Thanks LadyAlekto and many brave RogueTech users on the BATTLETECHGAME discord for testing the mod despite its high tendency to explode the game.
-* Thanks HBS the game developer for giving me a ComStar experience when working on this mod.  Can't get any closer to repairing Lostech.
+* Thanks HBS the game developer for giving me a ComStar experience when working on this mod.  Can't get any closer to maintaining Lostech.

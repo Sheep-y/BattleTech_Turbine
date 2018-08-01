@@ -1,8 +1,9 @@
 ﻿using BattleTech;
 using BattleTech.Data;
 using System;
-using System.Linq;
+using System.Diagnostics;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 
 namespace Sheepy.BattleTechMod.Turbine {
@@ -46,6 +47,7 @@ namespace Sheepy.BattleTechMod.Turbine {
               isLoading == null || isLoadingAsync == null || CreateByResourceType == null || SaveCache == null )
             throw new NullReferenceException( "One or more DataManager fields not found with reflection." );
          logger = HBS.Logging.Logger.GetLogger( "Data.DataManager" );
+         stopwatch = new Stopwatch();
          Patch( dmType.GetConstructors()[0], "DataManager_ctor", null );
          Patch( dmType, "Clear", "Override_Clear", null );
          Patch( dmType, "CheckAsyncRequestsComplete", NonPublic, "Override_CheckRequestsComplete", null );
@@ -127,6 +129,10 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static FieldInfo backgroundRequestsCurrentAllowedWeight, foregroundRequestsCurrentAllowedWeight;
       private static FieldInfo prewarmRequests, isLoading, isLoadingAsync;
       private static MethodInfo CreateByResourceType, SaveCache;
+
+      // Track queue time
+      private static Stopwatch stopwatch;
+      private static long totalLoadTime = 0;
 
       private static string GetName ( MechDef mech ) { return mech == null ? "null" : ( mech.Name + " (" + mech.ChassisID + ")" ); }
       private static string GetKey ( DataManager.DataManagerLoadRequest request ) { return GetKey( request.ResourceType, request.ResourceId ); }
@@ -216,7 +222,12 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( request.IsComplete() )
             foregroundLoading.Remove( request );
          if ( CheckRequestsComplete() ) {
-            LogTime( "Foreground requests cleared. Publishing DataManagerLoadCompleteMessage." );
+            if ( foreground.Count > 0 ) {
+               stopwatch.Stop();
+               LogTime( "Foreground queue ({0}) cleared. {1:n0}ms this queue, {2:n0}ms total.", foreground.Count, stopwatch.ElapsedMilliseconds, totalLoadTime += stopwatch.ElapsedMilliseconds );
+               stopwatch.Reset();
+            } else
+               LogTime( "Empty foreground queue cleared." );
             isLoading.SetValue( me, false );
             SaveCache.Invoke( me, null );
             foreground.Clear();
@@ -242,7 +253,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( DebugLog ) Log( "Notified Done Async: " + GetKey( request ) );
          CheckMechDefDependencies( request );
          if ( CheckAsyncRequestsComplete() ) {
-            if ( DebugLog ) LogTime( "Background requests cleared. Publishing DataManagerAsyncLoadCompleteMessage." );
+            if ( DebugLog ) LogTime( "Background requests cleared." );
             isLoadingAsync.SetValue( me, false );
             SaveCache.Invoke( me, null );
             background.Clear();
@@ -445,12 +456,14 @@ namespace Sheepy.BattleTechMod.Turbine {
          bool isTemplate = identifier.ToLowerInvariant().Contains("template");
          if ( !movedToForeground && !skipLoad && !isTemplate ) {
             dataManagerLoadRequest = (DataManager.DataManagerLoadRequest) CreateByResourceType.Invoke( me, new object[]{ resourceType, identifier, prewarm } );
-            if ( foregroundLoading.Count <= 0 ) LogTime( "Starting new queue" );
+            if ( foreground.Count <= 0 ) {
+               LogTime( "Starting new queue" );
+               stopwatch.Start();
+            }
             if ( DebugLog ) Log( "Queued: {0} ({1}) ", key, dataManagerLoadRequest.GetType() );
             foreground.Add( key, dataManagerLoadRequest );
-            if ( ! dataManagerLoadRequest.IsComplete() ) {
+            if ( ! dataManagerLoadRequest.IsComplete() )
                foregroundLoading.Add( dataManagerLoadRequest );
-            }
          }
          return false;
       }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
@@ -552,7 +565,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( DebugLog ) Log( "Stop logging dependencies of {0}.", GetName( monitoringMech ) );
          monitoringMech = null;
       }
-         
+
 
       // ============ Safety System: Kill Switch and Logging ============
 
