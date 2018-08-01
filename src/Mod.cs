@@ -32,6 +32,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static Type dmType;
 
+      /*
       private static HBS.Logging.ILog dataLoaderLogger = HBS.Logging.Logger.GetLogger( "DataLoader", HBS.Logging.LogLevel.Log );
       private static HashSet<string> reading = new HashSet<string>();
 
@@ -42,8 +43,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                return false;
             }
             reading.Add( path );
-            if ( dataLoaderLogger.IsDebugEnabled )
-               dataLoaderLogger.LogDebug("Loading: " + path);
+            if ( dataLoaderLogger.IsDebugEnabled ) dataLoaderLogger.LogDebug("Loading: " + path);
             int size = (int) new FileInfo( path ).Length;
             byte[] data = new byte[ size ];
             Log( "Async open " + path );
@@ -58,9 +58,10 @@ namespace Sheepy.BattleTechMod.Turbine {
          } catch ( Exception ex ) { return Error( ex ); }
          return false;
       }
+      */
 
       public override void ModStarts () {
-         Patch( typeof( DataLoader ), "CallHandler", NonPublic, "Override_CallHandler", null );
+         //Patch( typeof( DataLoader ), "CallHandler", NonPublic, "Override_CallHandler", null );
 
          LogTime( "A simple filter and safety shield first." );
          // Fix VFXNames.AllNames NPE
@@ -335,7 +336,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                   if ( DebugLog ) Log( "Found MechDef dependency. Check {0} of {1}. {2} remains.", key, GetName( mech ), mechDefDependency[ mech ].Count );
                   continue;
                }
-               if ( DebugLog ) LogTime( "All depencency loaded for {0}.\n{1}", GetName( mech ), new System.Diagnostics.StackTrace( true ).ToString() );
+               if ( DebugLog ) LogTime( "All depencency loaded for {0}.\n{1}", GetName( mech ), Logger.Stacktrace );
                checkingMech = null;
                mech.CheckDependenciesAfterLoad( new DataManagerLoadCompleteMessage() );
             }
@@ -585,7 +586,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          MechDef me = __instance;
          if ( ! mechDefDependency.TryGetValue( me, out HashSet<string> toLoad ) ) {
             if ( checkingMech == null ) {
-               if ( DebugLog ) Log( "Allowing MechDef verify {0}.\n{1}", GetName( me ), new System.Diagnostics.StackTrace( true ).ToString() );
+               if ( DebugLog ) Log( "Allowing MechDef verify {0}.\n{1}", GetName( me ), Logger.Stacktrace );
                checkingMech = __instance;
                return true;
             }
@@ -648,8 +649,8 @@ namespace Sheepy.BattleTechMod.Turbine {
       public static void Log ( string message = "" ) { ModLog.Log( message ); }
       public static void Log ( string message, params object[] args ) { ModLog.Log( message, args ); }
 
-      public static void LogTime ( string message = "" ) { ModLog.Log( DateTime.Now.ToString( "mm:ss.ffff" ) + " " + message ); }
-      public static void LogTime ( string message, params object[] args ) { ModLog.Log( DateTime.Now.ToString( "mm:ss.ffff" ) + " " + message, args ); }
+      public static void LogTime ( string message = "" ) { ModLog.LogTime( message ); }
+      public static void LogTime ( string message, params object[] args ) { ModLog.LogTime( message, args ); }
 
       public static void Warn ( object message ) { ModLog.Warn( message ); }
       public static void Warn ( string message ) { ModLog.Warn( message ); }

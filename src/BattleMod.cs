@@ -491,9 +491,17 @@ namespace Sheepy.BattleTechMod {
          }
          Log( txt ); 
       }
+
+      public static string Stacktrace { get {
+         return new System.Diagnostics.StackTrace( true ).ToString();
+      } }
+
       public void Log ( string message, params object[] args ) { Log( Format( message, args ) ); }
       public void Log ( string message ) { WriteLog( message + NewLine ); }
       private static readonly string NewLine = Environment.NewLine;
+
+      public void LogTime ( string message = "" ) { Log( DateTime.Now.ToString( "mm:ss.ffff" ) + " " + message ); }
+      public void LogTime ( string message, params object[] args ) { Log( DateTime.Now.ToString( "mm:ss.ffff" ) + " " + message, args ); }
 
       public void Warn ( object message ) { Warn( message?.ToString() ); }
       public void Warn ( string message ) { Log( "Warning: " + message ); }
