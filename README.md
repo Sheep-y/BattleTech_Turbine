@@ -53,26 +53,29 @@ When a new MechDef is encountered, it is allowed through and the compressor is s
 Once it is through, we have captured its request dependency list, which opens the bypass tunnel for the MechDef.
 
 If anything cause the MechDef to re-enter the engine, it will now bypass its original dependency processing.
-This continues until all its dependencies are processed.  Then the MechDef is manually summoned back.
-Its bypass will stay open; only one MechDef may pass through the engine at any one time.  The others are still bypassed.
+This continues until all its dependencies are processed.  Then the MechDef is manually summoned back and allowed pass.
+Its bypass will stay open; only one MechDef may pass through the engine at any one time.
+Others are still bypassed when one is in the pipeline.
 
-Thanks to the bypass, the engine can skip lots of unnecessary work and can fit into a smaller call stack.
+Thanks to the bypass, the engine can skip lots of inefficient work for a higher horsepower, and can fit into a smaller call stack.
 
 Requests that are not bypassed will go through a turbine, that the original engine does not have.
-It is a loading queue, maintained separately from the full load queue, that drives the compressor's state checks.
+It is an unfinished task queue, maintained separately from the full job queue, that drives the compressor's operation.
 
 As you can expect, all these parts work together to make the game's resource engine more efficient.
 If the turbine broke, the compressor may cease to spin, and the whole engine stops.
 If the bypass took too much requests away, the turbine may stops and again the whole engine stops.
-If an explosion happened that damaged the compressor, you can expect the whole engine to breakdown.
+What if an explosion happens and damages the compressor?  Well, you can expect the whole engine to breakdown.
 
 As a safety measure, the mod has a kill switch, that is triggered when it detects any explosion (not same as engine stop).
 When the unfortunate happens, the whole mod will disintegrates and falls away, leaving bare the original engine.
 This is best happened during part installation.  If any part does not fit, perhaps because of game update, all parts will break away.
-Unlike Hollywood movie, though, engine repair rarely works mid-flight.  In the whole bypass development, it saved a running game once.
 
-Finally, the mod has a black box.  On every launch, it keeps a log of every single parts that are installed.
-But its real value is its sensors, installed in all parts, that allow it to log explosions.  The result is saved in Log_Turbine.txt.
+It can also happens when the game is running.  Unlike Hollywood movie, though, engine repairs rarely work mid-flight.
+In the whole bypass development, it saved a running game once.  That once is the *only* reason the explosive bolts are kept.
+
+Finally, the mod has a blackbox logger.  It keeps a non-persistent log of installed parts and general performance of the turbine.
+But its real value is its sensors, installed in all parts, that allow it to log explosions.  Records are kept in  Log_Turbine.txt.
 
 
 # Credits
