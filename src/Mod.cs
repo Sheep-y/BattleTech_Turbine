@@ -15,7 +15,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static bool UnpatchManager = true;
 
       // Don't timeout my load!
-      private static bool NeverTimeout = true;
+      private const bool NeverTimeout = true;
 
       // Hack MechDef dependency checking?
       private const bool HackMechDefDependencyCheck = true;
@@ -33,6 +33,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static float currentTimeout = -1, currentAsyncTimeout = -1;
 
       public override void ModStarts () {
+         LogTime( "Ok let's try to install Turbine." );
          // A pretty safe patch that disables invalid or immediately duplicating complete messages.
          Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, "Skip_DuplicateRequestCompleteMessage" );
 
@@ -65,9 +66,6 @@ namespace Sheepy.BattleTechMod.Turbine {
          foreground = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          background = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          foregroundLoading = new HashSet<DataManager.DataManagerLoadRequest>();
-         UnpatchManager = false;
-         LogTime( "Turbine initialised" );
-
          /* // Code to patch all resource load requests. Good luck with it.
          Type ReqType = typeof( DataManager.ResourceLoadRequest<> );
          // I _hope_ I got everything in the primary assembly.  Not going to check the whole game!
@@ -80,6 +78,12 @@ namespace Sheepy.BattleTechMod.Turbine {
             Patch( typeof( MechDef ), "CheckDependenciesAfterLoad", "Skip_CheckDependenciesAfterLoad", "Cleanup_CheckDependenciesAfterLoad" );
             Patch( typeof( MechDef ), "RequestDependencies", "StartLogMechDefDependencies", "StopLogMechDefDependencies" );
          }
+         UnpatchManager = false;
+         LogTime( "Turbine initialised" );
+      }
+
+      public override void GameStartsOnce () {
+         LogTime( "Mods found: " + Join( ", ", BattleMod.GetModList() ) );
       }
 
       /* // Code to test ResourceLoadRequest subclass. https://stackoverflow.com/a/457708/893578 by JaredPar
@@ -126,7 +130,7 @@ namespace Sheepy.BattleTechMod.Turbine {
             return false;
          }
          if ( toLoad.Count > 0 ) {
-            if ( DebugLog ) Log( "Bypassing MechDef check {0} because not fully loaded.", GetName( me ) );
+            if ( DebugLog ) Log( "Bypassing MechDef check {0} because waiting for {1}.", GetName( me ), toLoad.First() );
             return false;
          }
          if ( DebugLog ) Log( "Allowing MechDef check {0}.", GetName( me ) );
@@ -247,7 +251,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( request.IsComplete() )
             foregroundLoading.Remove( request );
          if ( CheckRequestsComplete() ) {
-            if ( DebugLog ) LogTime( "Foreground requests cleared. Publishing DataManagerLoadCompleteMessage." );
+            LogTime( "Foreground requests cleared. Publishing DataManagerLoadCompleteMessage." );
             isLoading.SetValue( me, false );
             SaveCache.Invoke( me, null );
             foreground.Clear();
@@ -311,6 +315,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       public static bool Override_ProcessRequests ( DataManager __instance ) { try {
          if ( UnpatchManager ) return true;
+         if ( foregroundLoading.Count <= 0 ) return false; // Early abort before reflection
          DataManager me = __instance;
          int lightLoad = 0, heavyLoad = 0;
          uint currentAllowedWeight = (uint) foregroundRequestsCurrentAllowedWeight.GetValue( me );
@@ -475,6 +480,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          bool isTemplate = identifier.ToLowerInvariant().Contains("template");
          if ( !movedToForeground && !skipLoad && !isTemplate ) {
             dataManagerLoadRequest = (DataManager.DataManagerLoadRequest) CreateByResourceType.Invoke( me, new object[]{ resourceType, identifier, prewarm } );
+            if ( foregroundLoading.Count <= 0 ) LogTime( "Starting new queue" );
             if ( DebugLog ) Log( "Queued: {0} ({1}) ", key, dataManagerLoadRequest.GetType() );
             foreground.Add( key, dataManagerLoadRequest );
             if ( ! dataManagerLoadRequest.IsComplete() ) {
@@ -566,8 +572,8 @@ namespace Sheepy.BattleTechMod.Turbine {
       public static void Log ( string message = "" ) { ModLog.Log( message ); }
       public static void Log ( string message, params object[] args ) { ModLog.Log( message, args ); }
 
-      public static void LogTime ( string message = "" ) { ModLog.Log( DateTime.Now.ToString( "mm:ss" ) + " " + message ); }
-      public static void LogTime ( string message, params object[] args ) { ModLog.Log( DateTime.Now.ToString( "mm:ss" ) + " " + message, args ); }
+      public static void LogTime ( string message = "" ) { ModLog.Log( DateTime.Now.ToString( "mm:ss.ffff" ) + " " + message ); }
+      public static void LogTime ( string message, params object[] args ) { ModLog.Log( DateTime.Now.ToString( "mm:ss.ffff" ) + " " + message, args ); }
 
       public static void Warn ( object message ) { ModLog.Warn( message ); }
       public static void Warn ( string message ) { ModLog.Warn( message ); }
