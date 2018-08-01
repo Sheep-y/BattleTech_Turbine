@@ -28,10 +28,6 @@ namespace Sheepy.BattleTechMod.Turbine {
       }
 
       private static Type dmType;
-      private static MessageCenter center;
-      private static Dictionary<string, DataManager.DataManagerLoadRequest> foreground, background;
-      private static HashSet<DataManager.DataManagerLoadRequest> foregroundLoading;
-      private static float currentTimeout = -1, currentAsyncTimeout = -1;
 
       public override void ModStarts () {
          LogTime( "Ok let's try to install Turbine." );
@@ -51,7 +47,7 @@ namespace Sheepy.BattleTechMod.Turbine {
             throw new NullReferenceException( "One or more DataManager fields not found with reflection." );
          logger = HBS.Logging.Logger.GetLogger( "Data.DataManager" );
          Patch( dmType.GetConstructors()[0], "DataManager_ctor", null );
-         Patch( dmType, "Clear", "ClearRequests", null );
+         Patch( dmType, "Clear", "Override_Clear", null );
          Patch( dmType, "CheckAsyncRequestsComplete", NonPublic, "Override_CheckRequestsComplete", null );
          Patch( dmType, "CheckRequestsComplete", NonPublic, "Override_CheckRequestsComplete", null );
          Patch( dmType, "GraduateBackgroundRequest", NonPublic, "Override_GraduateBackgroundRequest", null );
@@ -67,6 +63,8 @@ namespace Sheepy.BattleTechMod.Turbine {
          foreground = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          background = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          foregroundLoading = new HashSet<DataManager.DataManagerLoadRequest>();
+         mechDefDependency = new Dictionary<MechDef, HashSet<string>>();
+         mechDefLookup = new Dictionary<string, HashSet<MechDef>>();
          /* // Code to patch all resource load requests. Good luck with it.
          Type ReqType = typeof( DataManager.ResourceLoadRequest<> );
          // I _hope_ I got everything in the primary assembly.  Not going to check the whole game!
@@ -98,6 +96,8 @@ namespace Sheepy.BattleTechMod.Turbine {
          return false;
       } /**/
 
+      // ============ Air Filter ============
+
       private static string lastMessage;
 
       private static void Skip_DuplicateRequestCompleteMessage ( DataManagerRequestCompleteMessage __instance ) {
@@ -113,51 +113,41 @@ namespace Sheepy.BattleTechMod.Turbine {
             lastMessage = key;
       }
 
-      private static Dictionary<MechDef, HashSet<string>> mechDefDependency = new Dictionary<MechDef, HashSet<string>>();
-      private static Dictionary<string, HashSet<MechDef>> mechDefLookup = new Dictionary<string, HashSet<MechDef>>();
-      private static MechDef monitoringMech, checkingMech;
+      // ============ Compressor & Turbine - the main rewrite ============
 
-      public static bool Skip_CheckDependenciesAfterLoad ( MechDef __instance, MessageCenterMessage message ) { try {
-         //__state = false;
-         if ( UnpatchManager ) return true;
-         if ( ! ( message is DataManagerRequestCompleteMessage ) ) return false;
-         MechDef me = __instance;
-         if ( ! mechDefDependency.TryGetValue( me, out HashSet<string> toLoad ) ) {
-            if ( checkingMech == null ) {
-               if ( DebugLog ) Log( "Allowing MechDef verify {0}.\n{1}", GetName( me ), new System.Diagnostics.StackTrace( true ).ToString() );
-               checkingMech = __instance;
-               return true;
-            }
-            if ( DebugLog ) Log( "Bypassing MechDef check {0} because checking {1}.", GetName( me ), GetName( checkingMech ) );
-            return false;
-         }
-         if ( toLoad.Count > 0 ) {
-            if ( DebugLog ) Log( "Bypassing MechDef check {0} because waiting for {1}.", GetName( me ), toLoad.First() );
-            return false;
-         }
-         if ( DebugLog ) Log( "Allowing MechDef check {0}.", GetName( me ) );
-         mechDefDependency.Remove( me );
-         return true;
-      }                 catch ( Exception ex ) { return Error( ex ); } }
+      // Manager states that were taken over
+      private static Dictionary<string, DataManager.DataManagerLoadRequest> foreground, background;
+      private static HashSet<DataManager.DataManagerLoadRequest> foregroundLoading;
+      private static float currentTimeout = -1, currentAsyncTimeout = -1;
 
-      public static void Cleanup_CheckDependenciesAfterLoad ( MechDef __instance ) {
-         if ( checkingMech == __instance ) checkingMech = null;
+      // Cache or access to original manager states
+      private static DataManager manager;
+      private static MessageCenter center;
+      private static HBS.Logging.ILog logger;
+      private static FieldInfo backgroundRequestsCurrentAllowedWeight, foregroundRequestsCurrentAllowedWeight;
+      private static FieldInfo prewarmRequests, isLoading, isLoadingAsync;
+      private static MethodInfo CreateByResourceType, SaveCache;
+
+      private static string GetName ( MechDef mech ) { return mech == null ? "null" : ( mech.Name + " (" + mech.ChassisID + ")" ); }
+      private static string GetKey ( DataManager.DataManagerLoadRequest request ) { return GetKey( request.ResourceType, request.ResourceId ); }
+      private static string GetKey ( BattleTechResourceType resourceType, string id ) { return (int) resourceType + "_" + id; }
+
+      public static void DataManager_ctor ( MessageCenter messageCenter ) {
+         center = messageCenter;
+         if ( DebugLog ) LogTime( "DataManager created." );
       }
 
-      public static void StartLogMechDefDependencies ( MechDef __instance ) {
+      public static void Override_Clear ( DataManager __instance ) {
          if ( UnpatchManager ) return;
-         if ( monitoringMech != null ) Warn( "Already logging dependencies for " + monitoringMech.ChassisID );
-         monitoringMech = __instance;
-         if ( DebugLog ) LogTime( "Start logging dependencies of {0}.", GetName( monitoringMech ) );
-         if ( ! mechDefDependency.ContainsKey( __instance ) )
-            mechDefDependency[ __instance ] = new HashSet<string>();
+         foreground.Clear();
+         background.Clear();
+         foregroundLoading.Clear();
+         mechDefDependency.Clear();
+         mechDefLookup.Clear();
+         if ( DebugLog ) LogTime( "All queues cleared." );
+         manager = __instance;
       }
-      
-      public static void StopLogMechDefDependencies () {
-         if ( DebugLog ) Log( "Stop logging dependencies of {0}.", GetName( monitoringMech ) );
-         monitoringMech = null;
-      }
-         
+
       public static bool Override_CheckRequestsComplete ( ref bool __result ) {
          if ( UnpatchManager ) return true;
          __result = CheckRequestsComplete();
@@ -178,33 +168,6 @@ namespace Sheepy.BattleTechMod.Turbine {
       }
       private static bool CheckAsyncRequestsComplete () { return background.Values.All( IsComplete ); }
       private static bool IsComplete ( DataManager.DataManagerLoadRequest e ) { return e.IsComplete(); }
-
-      private static HBS.Logging.ILog logger;
-      private static FieldInfo backgroundRequestsCurrentAllowedWeight, foregroundRequestsCurrentAllowedWeight;
-      private static FieldInfo prewarmRequests, isLoading, isLoadingAsync;
-      private static MethodInfo CreateByResourceType, SaveCache;
-
-      private static string GetName ( MechDef mech ) { return mech == null ? "null" : ( mech.Name + " (" + mech.ChassisID + ")" ); }
-      private static string GetKey ( DataManager.DataManagerLoadRequest request ) { return GetKey( request.ResourceType, request.ResourceId ); }
-      private static string GetKey ( BattleTechResourceType resourceType, string id ) { return (int) resourceType + "_" + id; }
-
-      private static DataManager manager;
-
-      public static void DataManager_ctor ( MessageCenter messageCenter ) {
-         center = messageCenter;
-         if ( DebugLog ) LogTime( "DataManager created." );
-      }
-
-      public static void ClearRequests ( DataManager __instance ) {
-         if ( UnpatchManager ) return;
-         if ( DebugLog ) LogTime( "All queues cleared." );
-         foreground.Clear();
-         background.Clear();
-         foregroundLoading.Clear();
-         mechDefDependency.Clear();
-         mechDefLookup.Clear();
-         manager = __instance;
-      }
       
       public static bool Override_GraduateBackgroundRequest ( DataManager __instance, ref bool __result, BattleTechResourceType resourceType, string id ) { try {
          if ( UnpatchManager ) return true;
@@ -543,6 +506,56 @@ namespace Sheepy.BattleTechMod.Turbine {
          return e.State == DataManager.DataManagerLoadRequest.RequestState.Processing;
       }
 
+      // ============ MechDef Bypass ============
+
+      private static Dictionary<MechDef, HashSet<string>> mechDefDependency;
+      private static Dictionary<string, HashSet<MechDef>> mechDefLookup;
+      private static MechDef monitoringMech, checkingMech;
+
+      public static bool Skip_CheckDependenciesAfterLoad ( MechDef __instance, MessageCenterMessage message ) { try {
+         //__state = false;
+         if ( UnpatchManager ) return true;
+         if ( ! ( message is DataManagerRequestCompleteMessage ) ) return false;
+         MechDef me = __instance;
+         if ( ! mechDefDependency.TryGetValue( me, out HashSet<string> toLoad ) ) {
+            if ( checkingMech == null ) {
+               if ( DebugLog ) Log( "Allowing MechDef verify {0}.\n{1}", GetName( me ), new System.Diagnostics.StackTrace( true ).ToString() );
+               checkingMech = __instance;
+               return true;
+            }
+            if ( DebugLog ) Log( "Bypassing MechDef check {0} because checking {1}.", GetName( me ), GetName( checkingMech ) );
+            return false;
+         }
+         if ( toLoad.Count > 0 ) {
+            if ( DebugLog ) Log( "Bypassing MechDef check {0} because waiting for {1}.", GetName( me ), toLoad.First() );
+            return false;
+         }
+         if ( DebugLog ) Log( "Allowing MechDef check {0}.", GetName( me ) );
+         mechDefDependency.Remove( me );
+         return true;
+      }                 catch ( Exception ex ) { return Error( ex ); } }
+
+      public static void Cleanup_CheckDependenciesAfterLoad ( MechDef __instance ) {
+         if ( checkingMech == __instance ) checkingMech = null;
+      }
+
+      public static void StartLogMechDefDependencies ( MechDef __instance ) {
+         if ( UnpatchManager ) return;
+         if ( monitoringMech != null ) Warn( "Already logging dependencies for " + monitoringMech.ChassisID );
+         monitoringMech = __instance;
+         if ( DebugLog ) LogTime( "Start logging dependencies of {0}.", GetName( monitoringMech ) );
+         if ( ! mechDefDependency.ContainsKey( __instance ) )
+            mechDefDependency[ __instance ] = new HashSet<string>();
+      }
+      
+      public static void StopLogMechDefDependencies () {
+         if ( DebugLog ) Log( "Stop logging dependencies of {0}.", GetName( monitoringMech ) );
+         monitoringMech = null;
+      }
+         
+
+      // ============ Safety System: Kill Switch and Logging ============
+
       private static bool KillManagerPatch ( DataManager me, Exception err ) { try {
          Error( err );
          LogTime( "Trying to hand resource loading over and suicide due to exception." );
@@ -556,17 +569,12 @@ namespace Sheepy.BattleTechMod.Turbine {
          backgroundRequests.AddRange( background.Values );
          background.Clear();
          foregroundRequests.AddRange( foreground.Values );
-         foreground.Clear();
-         foregroundLoading.Clear();
-         mechDefDependency.Clear();
-         mechDefLookup.Clear();
+         Override_Clear( manager );
          Log( "Handover completed. Good luck, commander." );
          return true;
       } catch ( Exception ex ) {
          return Error( ex );
       } }
-
-      // ============ Logging ============
 
       internal static Logger ModLog = Logger.BT_LOG;
 
