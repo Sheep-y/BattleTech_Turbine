@@ -31,10 +31,13 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static Type dmType;
 
       public override void ModStarts () {
-         LogTime( "Ok let's try to install Turbine." );
-         // A pretty safe patch that disables invalid or immediately duplicating complete messages.
+         LogTime( "A simple filter and safety shield first." );
+         // Fix VFXNames.AllNames NPE
+         Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
+         // A pretty safe filter that disables invalid or immediately duplicating complete messages.
          Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, "Skip_DuplicateRequestCompleteMessage" );
 
+         LogTime( "Ok let's try to install real Turbine." );
          dmType = typeof( DataManager );
          backgroundRequestsCurrentAllowedWeight = dmType.GetField( "backgroundRequestsCurrentAllowedWeight", NonPublic | Instance );
          foregroundRequestsCurrentAllowedWeight = dmType.GetField( "foregroundRequestsCurrentAllowedWeight", NonPublic | Instance );
@@ -102,7 +105,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static string lastMessage;
 
-      private static void Skip_DuplicateRequestCompleteMessage ( DataManagerRequestCompleteMessage __instance ) {
+      public static void Skip_DuplicateRequestCompleteMessage ( DataManagerRequestCompleteMessage __instance ) {
          if ( String.IsNullOrEmpty( __instance.ResourceId ) ) {
             __instance.hasBeenPublished = true; // Skip publishing empty id
             return;
@@ -113,6 +116,25 @@ namespace Sheepy.BattleTechMod.Turbine {
             __instance.hasBeenPublished = true;
          }  else
             lastMessage = key;
+      }
+
+      private static VFXNameDef[] nameCache;
+
+      public static bool Override_VFX_get_AllNames ( ref VFXNameDef[] __result ) {
+         if ( nameCache != null ) {
+            __result = nameCache;
+            return false;
+         }
+         // May throw NPE if this.persistentDamage or this.persistentCrit is null.
+         // No code change them, so maybe they are unloaded due to low memory conditions or other reasons.
+         return true;
+      }
+
+      public static void Cache_VFX_get_AllNames ( VFXNameDef[] __result ) {
+         if ( ! ReferenceEquals( __result, nameCache ) ) {
+            Log( "Caching VFXNamesDef.AllNames ({0})", __result.Length );
+            nameCache = __result;
+         }
       }
 
       // ============ Compressor & Turbine - the main rewrite ============
