@@ -1,5 +1,6 @@
 ﻿using BattleTech;
 using BattleTech.Data;
+using HBS.Data;
 using System;
 using System.Diagnostics;
 using System.Collections.Generic;
@@ -7,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 
 namespace Sheepy.BattleTechMod.Turbine {
+   using System.IO;
    using static System.Reflection.BindingFlags;
 
    #pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
@@ -30,7 +32,36 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static Type dmType;
 
+      private static HBS.Logging.ILog dataLoaderLogger = HBS.Logging.Logger.GetLogger( "DataLoader", HBS.Logging.LogLevel.Log );
+      private static HashSet<string> reading = new HashSet<string>();
+
+      public static bool Override_CallHandler ( string path, Action<string, Stream> handler ) {
+         try {
+            if ( reading.Contains( path ) ) {
+               Log( "Dup " + path );
+               return false;
+            }
+            reading.Add( path );
+            if ( dataLoaderLogger.IsDebugEnabled )
+               dataLoaderLogger.LogDebug("Loading: " + path);
+            int size = (int) new FileInfo( path ).Length;
+            byte[] data = new byte[ size ];
+            Log( "Async open " + path );
+            FileStream fileStream = new FileStream( path, FileMode.Open, FileAccess.Read, FileShare.Read, size, true );
+            if ( ! fileStream.IsAsync ) Warn( path + " is opened in sync" );
+            fileStream.BeginRead( data, 0, size, ( result ) => { try {
+               fileStream.EndRead( result );
+               fileStream.Close();
+               handler( path, new MemoryStream( data ) );
+               reading.Remove( path );
+            } catch ( Exception ex ) { Error( ex ); } }, null );
+         } catch ( Exception ex ) { return Error( ex ); }
+         return false;
+      }
+
       public override void ModStarts () {
+         Patch( typeof( DataLoader ), "CallHandler", NonPublic, "Override_CallHandler", null );
+
          LogTime( "A simple filter and safety shield first." );
          // Fix VFXNames.AllNames NPE
          Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
