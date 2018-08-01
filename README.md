@@ -1,5 +1,7 @@
-# Turbine 2018.08.01 #
+# Turbine 1.0 #
 For BATTLETECH 1.1.2
+
+GitHub: https://github.com/Sheep-y/BattleTech_Turbine
 
 Turbine is a BattleTech mod that lighten and speed up the game's resource loading.
 If your game has a tendency to crash when starting a new game, loading a save game, or mech bay, this mod *may* fix your problem.
@@ -8,11 +10,6 @@ Because of its low-level nature and the scale of the problem, it is rather delic
 
 If it works for you, you should see an obvious improvement in your game's loading time.
 If it does not work, your game will crash or hang.  Delete the mod to revert it to normal.
-
-For this reason, this mod cannot be downloaded from Nexus.
-If you want to talk about it, open issues on GitHub or join the [modding Discord](https://discord.gg/cnyQUch)
-
-GitHub: https://github.com/Sheep-y/BattleTech_Turbine
 
 This mod does not modify game data or save games.
 
@@ -24,12 +21,17 @@ This mod does not modify game data or save games.
 3. Launch and play as normal.  This mod has no settings.
 4. If the game crash or hang up during a loading screen or blank screen, delete the mod and try again.
 
+**IMPORTANT NOTE** - Do not run Turbine as ModTek, i.e. do not move into subfolder.  It'll crash if you try to make modtek load it.
+
 
 # Compatibility
 
 Turbine is NOT expected to work with any mod that also speed up resource loading, such as WhySoSlow.
 
 It should otherwise work with all mods, including those that add new files for the game to load.
+
+If it doesn't work for you, you can try to use the debug version which will generate a very detailed log,
+then creates a new issue and attach it.  It will run VERY slow however because of the logging.
 
 
 # How It Works

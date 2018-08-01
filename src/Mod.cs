@@ -20,6 +20,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       // Hack MechDef dependency checking?
       private const bool HackMechDefDependencyCheck = true;
 
+      // Will slow the loading to worse than pre-patch because of massive log
       private const bool DebugLog = false;
 
       public static void Init () {
@@ -83,6 +84,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       }
 
       public override void GameStartsOnce () {
+         if ( UnpatchManager ) return;
          LogTime( "Mods found: " + Join( ", ", BattleMod.GetModList() ) );
       }
 
