@@ -1,4 +1,4 @@
-# Turbine 1.0.1 #
+# Turbine 1.0.2 #
 For BATTLETECH 1.1.2
 
 Turbine is a BattleTech mod that lighten and speed up the game's resource loading.
@@ -37,6 +37,9 @@ then creates a new issue and attach it.  It may run VERY slow however because of
 # How It Works
 
 The mod has a few functional parts.
+
+Before any work starts, a safety rail is installed around `VFXNamesDef.AllNames`.
+The rail will cache the first name list and return it in all subsequence calls, stopping a potential `NullReferenceException`.
 
 First is the request filter.  A cheap and safe check is done after every `DataManagerRequestCompleteMessage` creation.
 If the request is invalid or same as last one, it is filtered out.

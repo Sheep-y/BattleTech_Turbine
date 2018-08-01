@@ -23,7 +23,7 @@ namespace Sheepy.BattleTechMod {
 
       protected BattleMod ( ) {
          SetupDefault();
-         PatchBattleMods();
+         //PatchBattleMods(); // A temporary hack until BattleMod can detect overloaded methods
       }
 
       public void Start ( ref Logger log ) {
