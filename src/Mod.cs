@@ -1,6 +1,5 @@
 ﻿using BattleTech;
 using BattleTech.Data;
-
 using System;
 using System.Diagnostics;
 using System.Collections.Generic;
@@ -8,7 +7,6 @@ using System.Linq;
 using System.Reflection;
 
 namespace Sheepy.BattleTechMod.Turbine {
-
    using static System.Reflection.BindingFlags;
 
    #pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
@@ -125,6 +123,9 @@ namespace Sheepy.BattleTechMod.Turbine {
             lastMessage = key;
       }
 
+      // Cache GameConstants by GameInstance hash for reuse.
+      // I could have dug deeper to find why CombatGameConstants.LoadFromManifest does not populate MovementConstants.MoveTable,
+      // but I don't want to spend too much time on this mod which should be a temporary measure before game ver 1.2 lands.
       public static Dictionary<int, WeakReference> ConstantCache = new Dictionary<int, WeakReference>();
 
       public static bool Override_CombatGameConstants_CreateFromSaved ( ref CombatGameConstants __result, GameInstance game ) {
@@ -276,7 +277,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                stopwatch.Stop();
                LogTime( "Foreground queue ({0}) cleared. {1:n0}ms this queue, {2:n0}ms total.", foreground.Count, stopwatch.ElapsedMilliseconds, totalLoadTime += stopwatch.ElapsedMilliseconds );
                stopwatch.Reset();
-            } else
+            } else if ( DebugLog )
                LogTime( "Empty foreground queue cleared by {0}.", GetKey( request ) );
             isLoading.SetValue( me, false );
             SaveCache.Invoke( me, null );
@@ -511,9 +512,8 @@ namespace Sheepy.BattleTechMod.Turbine {
                LogTime( "Starting new queue" );
                stopwatch.Start();
             }
-            if ( DebugLog );
-            if ( key == "19_CombatGameConstants" )
-               Log( "Queued: {0} ({1})\n{2}", key, dataManagerLoadRequest.GetType(), Logger.Stacktrace );
+            if ( DebugLog ) Log( "Queued: {0} ({1})\n{2}", key, dataManagerLoadRequest.GetType(), Logger.Stacktrace );
+            //if ( key == "19_CombatGameConstants" )
             foreground.Add( key, dataManagerLoadRequest );
             if ( LoadingQueue && ! dataManagerLoadRequest.IsComplete() )
                foregroundLoading.Add( dataManagerLoadRequest );
