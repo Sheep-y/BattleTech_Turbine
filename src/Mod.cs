@@ -35,7 +35,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static Type dmType;
 
-      /*
+      /**
       private static HBS.Logging.ILog dataLoaderLogger = HBS.Logging.Logger.GetLogger( "DataLoader", HBS.Logging.LogLevel.Log );
       private static HashSet<string> reading = new HashSet<string>();
 
@@ -49,9 +49,10 @@ namespace Sheepy.BattleTechMod.Turbine {
             if ( dataLoaderLogger.IsDebugEnabled ) dataLoaderLogger.LogDebug("Loading: " + path);
             int size = (int) new FileInfo( path ).Length;
             byte[] data = new byte[ size ];
-            Log( "Async open " + path );
+            if ( path.EndsWith( "CombatGameConstants.json" ) )
+               Log( "Load Const " + Logger.Stacktrace );
             FileStream fileStream = new FileStream( path, FileMode.Open, FileAccess.Read, FileShare.Read, size, true );
-            if ( ! fileStream.IsAsync ) Warn( path + " is opened in sync" );
+            //if ( ! fileStream.IsAsync ) Warn( path + " is opened in sync" );
             fileStream.BeginRead( data, 0, size, ( result ) => { try {
                fileStream.EndRead( result );
                fileStream.Close();
@@ -61,13 +62,131 @@ namespace Sheepy.BattleTechMod.Turbine {
          } catch ( Exception ex ) { return Error( ex ); }
          return false;
       }
+      /**/
+
+      /*
+      public static bool Override_CalculateHeatEfficiencyStat ( MechDef mechDef, ref float currentValue, ref float maxValue ) {
+         float cooldown = 0f;
+         float jumpHeat = 0f;
+         float alphaHeat = 0f;
+         float maxHeat = 0f;
+         float heatEff = 0f;
+         int jumpJet = 0;
+         try {
+            if ( CombatConstants == null )
+               CombatConstants = CombatGameConstants.CreateFromSaved( UnityGameInstance.BattleTechGame );
+            cooldown = CombatConstants.Heat.InternalHeatSinkCount * CombatConstants.Heat.DefaultHeatSinkDissipationCapacity;
+            maxHeat = CombatConstants.Heat.MaxHeat;
+         } catch ( Exception ex ) {
+            Warn( "A" );
+            Error( ex );
+            return false;
+         }
+         for ( int i = 0 ; i < mechDef.Inventory.Length ; i++ ) {
+            MechComponentRef mechComponentRef = mechDef.Inventory[i];
+         try {
+            if ( mechComponentRef.DamageLevel == ComponentDamageLevel.Functional || mechComponentRef.DamageLevel == ComponentDamageLevel.Installing ) {
+               //Log( "Def Before " + mechComponentRef.Def );
+               if ( mechComponentRef.Def == null )
+                  mechComponentRef.RefreshComponentDef();
+               //Log( "Def After " + mechComponentRef.Def );
+               if ( mechComponentRef.ComponentDefType == ComponentType.Weapon ) {
+                  WeaponDef weaponDef = mechComponentRef.Def as WeaponDef;
+                  alphaHeat += (float) weaponDef.HeatGenerated;
+               } else if ( mechComponentRef.ComponentDefType == ComponentType.JumpJet ) {
+                  if ( mechComponentRef.DamageLevel < ComponentDamageLevel.NonFunctional )
+                     jumpJet++;
+               } else if ( mechComponentRef.ComponentDefType == ComponentType.HeatSink ) {
+                  HeatSinkDef heatSinkDef = mechComponentRef.Def as HeatSinkDef;
+                  cooldown += heatSinkDef.DissipationCapacity;
+                  if ( heatSinkDef.statusEffects != null ) {
+                     for ( int j = 0 ; j < heatSinkDef.statusEffects.Length ; j++ ) {
+                        if ( heatSinkDef.statusEffects[ j ].statisticData.statName == "MaxHeat" )
+                           maxHeat += float.Parse( heatSinkDef.statusEffects[ j ].statisticData.modValue );
+                        if ( heatSinkDef.statusEffects[ j ].statisticData.statName == "HeatGenerated" && heatSinkDef.statusEffects[ j ].statisticData.targetCollection == StatisticEffectData.TargetCollection.Weapon )
+                           heatEff += 1f - float.Parse( heatSinkDef.statusEffects[ j ].statisticData.modValue );
+                     }
+                  }
+               } else if ( mechComponentRef.ComponentDefType == ComponentType.Upgrade ) {
+                  UpgradeDef upgradeDef = mechComponentRef.Def as UpgradeDef;
+                  if ( upgradeDef.statusEffects != null ) {
+                     for ( int k = 0 ; k < upgradeDef.statusEffects.Length ; k++ ) {
+                        if ( upgradeDef.statusEffects[ k ].statisticData.statName == "MaxHeat" )
+                           maxHeat += float.Parse( upgradeDef.statusEffects[ k ].statisticData.modValue );
+                        if ( upgradeDef.statusEffects[ k ].statisticData.statName == "HeatGenerated" && upgradeDef.statusEffects[ k ].statisticData.targetCollection == StatisticEffectData.TargetCollection.Weapon )
+                           heatEff += 1f - float.Parse( upgradeDef.statusEffects[ k ].statisticData.modValue );
+                     }
+                  }
+               }
+            }
+         } catch ( Exception ex ) {
+            Warn( mechComponentRef );
+            Error( ex );
+            return false;
+         }
+         }
+         try {
+            Log( "M = " +CombatConstants.MoveConstants );
+            Log( "H = " + CombatConstants.Heat );
+            if ( jumpJet >= CombatConstants.MoveConstants.MoveTable.Length )
+               jumpJet = CombatConstants.MoveConstants.MoveTable.Length - 1;
+            int num7 = 3;
+            if ( jumpJet > 0 )
+               jumpHeat += jumpJet * CombatConstants.Heat.JumpHeatUnitSize / num7;
+            else
+               jumpHeat = 0f;
+            alphaHeat += alphaHeat * heatEff;
+         } catch ( Exception ex ) {
+            Warn( "C" );
+            Error( ex );
+            return false;
+         }
+         try {
+            cooldown *= CombatConstants.Heat.GlobalHeatSinkMultiplier;
+            float totalHeat = (alphaHeat + jumpHeat) * CombatConstants.Heat.GlobalHeatIncreaseMultiplier;
+            float heatDiff = UnityEngine.Mathf.Min( cooldown / totalHeat * 100f, 100f);
+            currentValue = UnityEngine.Mathf.Round( ( heatDiff - BattleTechGame.MechStatisticsConstants.MinHeatEfficiency ) / ( BattleTechGame.MechStatisticsConstants.MaxHeatEfficiency - UnityGameInstance.BattleTechGame.MechStatisticsConstants.MinHeatEfficiency ) * 10f + ( maxHeat - CombatConstants.Heat.MaxHeat ) / 2f );
+            currentValue = UnityEngine.Mathf.Max( currentValue, 1f );
+            maxValue = 10f;
+         } catch ( Exception ex ) {
+            Warn( "D" );
+            Error( ex );
+            return false;
+         }
+         return false;
+      }
       */
+
+      public static string CombatConstantJSON;
+      private static MethodInfo LoadMoraleResources, LoadMaintenanceResources;
+         
+      public static void Save_CombatGameConstants_Data ( MessageCenterMessage message ) {
+         if ( message is DataManagerRequestCompleteMessage<string> msg && msg.ResourceType == BattleTechResourceType.CombatGameConstants ) {
+            CombatConstantJSON = msg.Resource;
+            TryRun( ModLog, () => {
+               LoadMoraleResources = typeof( CombatGameConstants ).GetMethod( "LoadMoraleResources", NonPublic | Instance );
+               LoadMaintenanceResources = typeof( CombatGameConstants ).GetMethod( "LoadMaintenanceResources", NonPublic | Instance );
+            } );
+         }
+      }
+
+      public static bool Override_CombatGameConstants_LoadFromManifest ( CombatGameConstants __instance ) {
+         if ( CombatConstantJSON == null ) return true;
+			__instance.FromJSON( CombatConstantJSON );
+         LoadMoraleResources?.Invoke( __instance, null );
+         LoadMaintenanceResources?.Invoke( __instance, null );
+         return false;
+      }
 
       public override void ModStarts () {
          //Patch( typeof( DataLoader ), "CallHandler", NonPublic, "Override_CallHandler", null );
          Log( "Loading queue {0}.", LoadingQueue  ? "on" : "off" );
          Log( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
          Log( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
+
+         //Patch( typeof( MechStatisticsRules ), "CalculateHeatEfficiencyStat", Static, "Override_CalculateHeatEfficiencyStat", null );
+         Patch( typeof( CombatGameConstants ), "OnDataLoaded", NonPublic, "Save_CombatGameConstants_Data", null );
+         Patch( typeof( CombatGameConstants ), "LoadFromManifest", NonPublic, "Override_CombatGameConstants_LoadFromManifest", null );
 
          LogTime( "A simple filter and safety shield first." );
          // Fix VFXNames.AllNames NPE
@@ -519,7 +638,9 @@ namespace Sheepy.BattleTechMod.Turbine {
                LogTime( "Starting new queue" );
                stopwatch.Start();
             }
-            if ( DebugLog ) Log( "Queued: {0} ({1}) ", key, dataManagerLoadRequest.GetType() );
+            if ( DebugLog ); 
+            if ( key == "19_CombatGameConstants" )
+               Log( "Queued: {0} ({1})\n{2}", key, dataManagerLoadRequest.GetType(), Logger.Stacktrace );
             foreground.Add( key, dataManagerLoadRequest );
             if ( LoadingQueue && ! dataManagerLoadRequest.IsComplete() )
                foregroundLoading.Add( dataManagerLoadRequest );
