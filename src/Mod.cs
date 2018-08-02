@@ -1,6 +1,6 @@
 ﻿using BattleTech;
 using BattleTech.Data;
-using HBS.Data;
+
 using System;
 using System.Diagnostics;
 using System.Collections.Generic;
@@ -8,7 +8,7 @@ using System.Linq;
 using System.Reflection;
 
 namespace Sheepy.BattleTechMod.Turbine {
-   using System.IO;
+
    using static System.Reflection.BindingFlags;
 
    #pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
@@ -34,39 +34,17 @@ namespace Sheepy.BattleTechMod.Turbine {
       }
 
       private static Type dmType;
-      public static string CombatConstantJSON;
-      private static MethodInfo LoadMoraleResources, LoadMaintenanceResources;
-         
-      public static void Save_CombatGameConstants_Data ( MessageCenterMessage message ) {
-         if ( message is DataManagerRequestCompleteMessage<string> msg && msg.ResourceType == BattleTechResourceType.CombatGameConstants ) {
-            CombatConstantJSON = msg.Resource;
-            TryRun( ModLog, () => {
-               LoadMoraleResources = typeof( CombatGameConstants ).GetMethod( "LoadMoraleResources", NonPublic | Instance );
-               LoadMaintenanceResources = typeof( CombatGameConstants ).GetMethod( "LoadMaintenanceResources", NonPublic | Instance );
-            } );
-         }
-      }
-
-      public static bool Override_CombatGameConstants_LoadFromManifest ( CombatGameConstants __instance ) {
-         if ( CombatConstantJSON == null ) return true;
-			__instance.FromJSON( CombatConstantJSON );
-         LoadMoraleResources?.Invoke( __instance, null );
-         LoadMaintenanceResources?.Invoke( __instance, null );
-         return false;
-      }
 
       public override void ModStarts () {
          Log( "Loading queue {0}.", LoadingQueue  ? "on" : "off" );
          Log( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
          Log( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
 
-         // 1.0.3 temp hack
-         Patch( typeof( CombatGameConstants ), "OnDataLoaded", NonPublic, "Save_CombatGameConstants_Data", null );
-         Patch( typeof( CombatGameConstants ), "LoadFromManifest", NonPublic, "Override_CombatGameConstants_LoadFromManifest", null );
-
-         LogTime( "A simple filter and safety shield first." );
+         LogTime( "Some simple filters and safety shield first." );
          // Fix VFXNames.AllNames NPE
          Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
+         // CombatGameConstants can be loaded and reloaded many times.  Cache it for reuse and fix an NPE.
+         Patch( typeof( CombatGameConstants ), "CreateFromSaved", Static, "Override_CombatGameConstants_CreateFromSaved", "Save_CombatGameConstants" );
          // A pretty safe filter that disables invalid or immediately duplicating complete messages.
          Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, "Skip_DuplicateRequestCompleteMessage" );
 
@@ -130,7 +108,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          return false;
       } /**/
 
-      // ============ Air Filter ============
+      // ============ Air Filters ============
 
       private static string lastMessage;
 
@@ -145,6 +123,25 @@ namespace Sheepy.BattleTechMod.Turbine {
             __instance.hasBeenPublished = true;
          }  else
             lastMessage = key;
+      }
+
+      public static Dictionary<int, WeakReference> ConstantCache = new Dictionary<int, WeakReference>();
+
+      public static bool Override_CombatGameConstants_CreateFromSaved ( ref CombatGameConstants __result, GameInstance game ) {
+         int id = game.GetHashCode(); // Yeah, a slim chance to conflict, but does it really matter for CombatGameConstants?
+         if ( ! ConstantCache.TryGetValue( id, out WeakReference link ) || link.Target == null ) {
+            foreach ( int key in ConstantCache.Keys.ToArray() )
+               if ( ConstantCache[ key ].Target == null ) ConstantCache.Remove( key );
+            return true;
+         }
+         __result = (CombatGameConstants) ConstantCache[ id ].Target;
+         return false;
+      }
+
+      public static void Save_CombatGameConstants ( CombatGameConstants __result, GameInstance game ) {
+         int id = game.GetHashCode(); // Alternative is either use game as key and keep it forever, or bring in a proper weak dictionary.
+         if ( ! ConstantCache.ContainsKey( id ) || ConstantCache[ id ].Target == null )
+            ConstantCache[ id ] = new WeakReference( __result );
       }
 
       private static VFXNameDef[] nameCache;
@@ -227,7 +224,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       }
       private static bool CheckAsyncRequestsComplete () { return background.Values.All( IsComplete ); }
       private static bool IsComplete ( DataManager.DataManagerLoadRequest e ) { return e.IsComplete(); }
-      
+
       public static bool Override_GraduateBackgroundRequest ( DataManager __instance, ref bool __result, BattleTechResourceType resourceType, string id ) { try {
          if ( UnpatchManager ) return true;
          __result = GraduateBackgroundRequest( __instance, resourceType, id );
@@ -514,7 +511,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                LogTime( "Starting new queue" );
                stopwatch.Start();
             }
-            if ( DebugLog ); 
+            if ( DebugLog );
             if ( key == "19_CombatGameConstants" )
                Log( "Queued: {0} ({1})\n{2}", key, dataManagerLoadRequest.GetType(), Logger.Stacktrace );
             foreground.Add( key, dataManagerLoadRequest );
@@ -616,7 +613,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( ! mechDefDependency.ContainsKey( __instance ) )
             mechDefDependency[ __instance ] = new HashSet<string>();
       }
-      
+
       public static void StopLogMechDefDependencies () {
          if ( DebugLog ) Log( "Stop logging dependencies of {0}.", GetName( monitoringMech ) );
          monitoringMech = null;
@@ -628,11 +625,11 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static bool KillManagerPatch ( DataManager me, Exception err ) { try {
          Error( err );
          LogTime( "Trying to hand resource loading over and suicide due to exception." );
-         List<DataManager.DataManagerLoadRequest> backgroundRequests = (List<DataManager.DataManagerLoadRequest>) 
+         List<DataManager.DataManagerLoadRequest> backgroundRequests = (List<DataManager.DataManagerLoadRequest>)
             dmType.GetField( "backgroundRequests", NonPublic | Instance ).GetValue( me );
-         List<DataManager.DataManagerLoadRequest> foregroundRequests = (List<DataManager.DataManagerLoadRequest>) 
+         List<DataManager.DataManagerLoadRequest> foregroundRequests = (List<DataManager.DataManagerLoadRequest>)
             dmType.GetField( "foregroundRequests", NonPublic | Instance ).GetValue( me );
-         if ( backgroundRequests == null || foregroundRequests == null ) 
+         if ( backgroundRequests == null || foregroundRequests == null )
             throw new NullReferenceException( "Requests not found; handover aborted." );
          UnpatchManager = true;
          backgroundRequests.AddRange( background.Values );

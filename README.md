@@ -1,4 +1,4 @@
-# Turbine 1.0.2 #
+# Turbine 1.0.4 #
 For BATTLETECH 1.1.2
 
 Turbine is a BattleTech mod that lighten and speed up the game's resource loading.
@@ -10,6 +10,7 @@ If it works for you, you should see an obvious improvement in your game's loadin
 If it does not work, your game will crash or hang.  Delete the mod to revert it to normal.
 
 This mod does not modify game data or save games.
+This mod does not fix memory leaks, either.  Rest your eyes.
 
 * GitHub: https://github.com/Sheep-y/BattleTech_Turbine
 * Nexus Mods: https://www.nexusmods.com/battletech/mods/288
@@ -31,15 +32,15 @@ Turbine is not expected to work with mods that also speed up *resource* loading,
 It should otherwise work with all mods, including those that add new files for the game to load.
 
 If it doesn't work for you, you can try to use the debug version which will generate a very detailed log,
-then creates a new issue and attach it.  It may run VERY slow however because of the massive logging.
+then creates a new issue and attach it.  But it may run VERY slow because of logging, if it doesn't explode.
 
 
 # How It Works
 
 The mod has a few functional parts.
 
-Before any work starts, a safety rail is installed around `VFXNamesDef.AllNames`.
-The rail will cache the first name list and return it in all subsequence calls, stopping a potential `NullReferenceException`.
+Before any work starts, two safety rails are installed around `VFXNamesDef.AllNames` and `CombatGameConstants.CreateFromSaved`,
+to cache their results so that repeated calls can be served immediately and to avoid potential errors.
 
 First is the request filter.  A cheap and safe check is done after every `DataManagerRequestCompleteMessage` creation.
 If the request is invalid or same as last one, it is filtered out.
