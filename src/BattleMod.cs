@@ -1,16 +1,18 @@
-﻿using BattleTech.UI;
-using BattleTech;
+﻿using BattleTech;
+using BattleTech.UI;
 using Harmony;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
-using Newtonsoft.Json;
+using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using System.Text;
-using System;
+using System.Text.RegularExpressions;
+using System.Threading;
 using UnityEngine;
 using static System.Reflection.BindingFlags;
 
@@ -21,33 +23,28 @@ namespace Sheepy.BattleTechMod {
       // Basic mod info for public access, will auto load from assembly then mod.json (if exists)
       public string Version { get; protected set; } = "Unknown";
 
-      protected BattleMod ( ) {
-         SetupDefault();
-         //PatchBattleMods(); // A temporary hack until BattleMod can detect overloaded methods
+      protected BattleMod () {
+         ReadBasicModInfo();
       }
 
+      public void Start () { Logger log = Logger; Start( ref log ); }
       public void Start ( ref Logger log ) {
          CurrentMod = this;
-         TryRun( Setup );
-         log = Logger;
+         TryRun( Setup ); // May be overloaded
+         if ( log != Logger ) 
+            log = Logger;
          Add( this );
-         CurrentMod = null;
-      }
-
-      public void Start () {
-         CurrentMod = this;
-         TryRun( Setup );
-         Add( this );
+         PatchBattleMods();
          CurrentMod = null;
       }
 
       public string BaseDir { get; protected set; }
       private string _LogDir;
-      public string LogDir { 
+      public string LogDir {
          get { return _LogDir; }
          protected set {
             _LogDir = value;
-            Logger = new Logger( GetLogFile() );
+            Logger = new Logger( GetLogFile(), true );
          }
       }
       public HarmonyInstance harmony { get; internal set; }
@@ -66,8 +63,8 @@ namespace Sheepy.BattleTechMod {
       private class ModInfo { public string Name;  public string Version; }
 #pragma warning restore CS0649
 
-      // Fill in blanks with Assembly values
-      private void SetupDefault () { TryRun( Logger, () => {
+      // Fill in blanks with Assembly values, then read from mod.json
+      private void ReadBasicModInfo () { TryRun( Logger, () => {
          Assembly file = GetType().Assembly;
          Id = GetType().Namespace;
          Name = file.GetName().Name;
@@ -83,10 +80,11 @@ namespace Sheepy.BattleTechMod {
          LogDir = BaseDir; // Create Logger after Name is read from mod.json
       } ); }
 
-      // Override this method to override Namd and Id
+      // Override this method to override Namd, Id, or Logger. Remember to call this base method!
       protected virtual void Setup () {
          Logger.Delete();
-         Logger.Log( "{2} Loading {0} Version {1} In {3}" + Environment.NewLine, Name, Version, DateTime.Now.ToString( "s" ), BaseDir );
+         Logger.Info( "{0:yyyy-MM-dd} Loading {1} Version {2} @ {3}", DateTime.Now, Name, Version, BaseDir );
+         Logger.Info( "Game Version {0}" + Environment.NewLine, VersionInfo.ProductVersion );
       }
 
       public static string Idify ( string text ) { return Join( string.Empty, new Regex( "\\W+" ).Split( text ), UppercaseFirst ); }
@@ -111,10 +109,12 @@ namespace Sheepy.BattleTechMod {
          if ( sanitise != null )
             TryRun( () => config = sanitise( config ) );
          string sanitised = JsonConvert.SerializeObject( config, Formatting.Indented, new JsonSerializerSettings { ContractResolver = new BattleJsonContract() } );
-         Logger.Log( "Loaded Settings: " + sanitised );
+         Logger.Info( "WARNING: Do NOT change settings here. This is just a log." );
+         Logger.Info( "Loaded Settings: " + sanitised );
+         Logger.Info( "WARNING: Do NOT change settings here. This is just a log." ); // Yes. It is intentionally repeated.
          string commented = BattleJsonContract.FormatSettingJsonText( settings.GetType(), sanitised );
-         if ( commented != fileText ) { // Can be triggered by comment or field update, not necessary sanitisation
-            Logger.Log( "Updating " + file );
+         if ( commented != fileText ) { // Can be triggered by comment or field updates, not necessary sanitisation.
+            Logger.Info( "Updating " + file );
             SaveSettings( commented );
          }
          settings = config;
@@ -136,27 +136,22 @@ namespace Sheepy.BattleTechMod {
          if ( ! modules.TryGetValue( this, out List<BattleModModule> list ) )
             modules.Add( this, list = new List<BattleModModule>() );
          if ( ! list.Contains( module ) ) {
-            if ( module != CurrentMod )
-               if ( module.Id == this.Id ) module.Id += "." + Idify( module.Name );
+            if ( module != this )
+               if ( module.Id == Id ) module.Id += "." + Idify( module.Name );
             list.Add( module );
             TryRun( Logger, module.ModStarts );
          }
          return this;
       }
 
-      private static bool BattleModsPatched = false;
+      private static bool GameStartPatched = false;
 
       public void PatchBattleMods () {
-         if ( BattleModsPatched ) return;
-         Logger oldLog = this.Logger;
-         this.Logger = Logger.BTML_LOG;
-         LogPatch = false;
+         if ( GameStartPatched ) return;
          Patch( typeof( UnityGameInstance ).GetMethod( "InitUserSettings", Instance | NonPublic ), null, typeof( BattleMod ).GetMethod( "RunGameStarts", Static | NonPublic ) );
          Patch( typeof( SimGameState ).GetMethod( "Init" ), null, typeof( BattleMod ).GetMethod( "RunCampaignStarts", Static | NonPublic ) );
          Patch( typeof( CombatHUD ).GetMethod( "Init", new Type[]{ typeof( CombatGameState ) } ), null, typeof( BattleMod ).GetMethod( "RunCombatStarts", Static | NonPublic ) );
-         LogPatch = true;
-         BattleModsPatched = true;
-         this.Logger = oldLog;
+         GameStartPatched = true;
       }
 
       private static bool CalledGameStartsOnce = false;
@@ -338,8 +333,6 @@ namespace Sheepy.BattleTechMod {
          Patch( patched, new HarmonyMethod( prefix ), new HarmonyMethod( postfix ) );
       }
 
-      protected bool LogPatch = true; // TODO: Control with Log Level
-
       protected void Patch ( MethodBase patched, HarmonyMethod prefix, HarmonyMethod postfix ) {
          string pre = prefix?.method?.Name, post = postfix?.method?.Name;
          if ( patched == null ) {
@@ -349,8 +342,7 @@ namespace Sheepy.BattleTechMod {
          if ( Mod.harmony == null )
             Mod.harmony = HarmonyInstance.Create( Id );
          Mod.harmony.Patch( patched, prefix, postfix );
-         if ( LogPatch )
-            Logger.Log( "Patched: {0} {1} [ {2} : {3} ]", patched.DeclaringType, patched, pre, post );
+         Logger.Vocal( "Patched: {0} {1} [ {2} : {3} ]", patched.DeclaringType, patched, pre, post );
       }
 
       // ============ UTILS ============
@@ -439,7 +431,7 @@ namespace Sheepy.BattleTechMod {
                   message += " >= " + shownMin;
             else
                message += " <= " + shownMin;
-            Logger.BTML_LOG.Log( message + ". Setting to " + val );
+            Logger.BTML_LOG.Info( message + ". Setting to " + val );
          }
          return val;
       }
@@ -449,96 +441,134 @@ namespace Sheepy.BattleTechMod {
    // Logging
    //
 
-   public class Logger {
+   public class Logger : IDisposable {
 
       public static readonly Logger BTML_LOG = new Logger( "Mods/BTModLoader.log" );
       public static readonly Logger BT_LOG = new Logger( "BattleTech_Data/output_log.txt" );
 
-      public Logger ( string file ) {
+      public Logger ( string file ) : this( file, false ) { }
+      public Logger ( string file, bool async ) {
          if ( String.IsNullOrEmpty( file ) ) throw new NullReferenceException();
          LogFile = file;
+         if ( ! async ) return;
+         queue = new List<LogEntry>();
+         worker = new Thread( WorkerLoop );
+         worker.Start();
       }
 
+      // ============ Self Prop ============
+
+      private Func<SourceLevels,string> _LevelText = ( level ) => { //return level.ToString() + ": ";
+         if ( level <= SourceLevels.Critical ) return "CRIT "; if ( level <= SourceLevels.Error       ) return "ERR  ";
+         if ( level <= SourceLevels.Warning  ) return "WARN "; if ( level <= SourceLevels.Information ) return "INFO ";
+         if ( level <= SourceLevels.Verbose  ) return "FINE "; return "TRAC ";
+      };
+      private string _TimeFormat = "hh:mm:ss.ffff ";
+      private bool _IgnoreDuplicateExceptions = true;
+
+      protected struct LogEntry { public DateTime time; public SourceLevels level; public object message; public object[] args; }
+      private HashSet<string> exceptions = new HashSet<string>();
+      private readonly List<LogEntry> queue;
+      private Thread worker;
+
+      // ============ Public Prop ============
+
+      public static string Stacktrace { get { return new StackTrace( true ).ToString(); } }
       public string LogFile { get; private set; }
 
-      public bool IgnoreDuplicateExceptions = true;
-      public Dictionary<string, int> exceptions = new Dictionary<string, int>();
+      // Settings are locked by this.  Worker is locked by queue.
+      public volatile SourceLevels LogLevel = SourceLevels.Information;
+      public Func<SourceLevels,string> LevelText { get => _LevelText; set { lock( this ) { _LevelText = value; } } }
+      public string TimeFormat { get => _TimeFormat; set { lock( this ) { _TimeFormat = value; } } }
+      public bool IgnoreDuplicateExceptions { get => _IgnoreDuplicateExceptions; set { lock( this ) {
+         _IgnoreDuplicateExceptions = value; 
+         if ( value ) { if ( exceptions == null ) exceptions = new HashSet<string>();
+         } else exceptions = null;
+      } } }
 
-      public bool Exists () {
-         return File.Exists( LogFile );
-      }
+      // ============ API ============
 
-      public Exception Delete () {
+      public virtual bool Exists () { return File.Exists( LogFile ); }
+
+      public virtual Exception Delete () {
          if ( LogFile == "Mods/BTModLoader.log" || LogFile == "BattleTech_Data/output_log.txt" )
             return new ApplicationException( "Cannot delete BTModLoader.log or BattleTech game log." );
-
-         Exception result = null;
          try {
             File.Delete( LogFile );
-         } catch ( Exception e ) { result = e; }
-         return result;
+            return null;
+         } catch ( Exception e ) { return e; }
       }
 
-      public void Log ( object message ) {
-         string txt = message?.ToString();
-         if ( message is Exception ex ) {
-            if ( exceptions.ContainsKey( txt ) ) {
-               exceptions[ txt ]++;
-               if ( IgnoreDuplicateExceptions )
-                  return;
-            } else
-               exceptions.Add( txt, 1 );
+      public void Log ( SourceLevels level, object message, params object[] args ) {
+         if ( ( level & LogLevel ) != level ) return;
+         LogEntry entry = new LogEntry(){ time = DateTime.Now, level = level, message = message, args = args };
+         if ( queue == null ) lock ( this ) {
+            WriteLog( entry );
+         } else lock ( queue ) {
+            if ( worker == null ) throw new InvalidOperationException( "Logger already disposed." );
+            queue.Add( entry );
+            Monitor.PulseAll( queue );
          }
-         Log( txt ); 
       }
 
-      public static string Stacktrace { get {
-         return new System.Diagnostics.StackTrace( true ).ToString();
-      } }
+      public void Trace ( object message = null, params object[] args ) { Log( SourceLevels.ActivityTracing, message, args ); }
+      public void Vocal ( object message = null, params object[] args ) { Log( SourceLevels.Verbose, message, args ); }
+      public void Info  ( object message = null, params object[] args ) { Log( SourceLevels.Information, message, args ); }
+      public void Warn  ( object message = null, params object[] args ) { Log( SourceLevels.Warning, message, args ); }
+      public void Error ( object message = null, params object[] args ) { Log( SourceLevels.Error, message, args ); }
 
-      public void Log ( string message, params object[] args ) { Log( Format( message, args ) ); }
-      public void Log ( string message ) { WriteLog( message + NewLine ); }
-      private static readonly string NewLine = Environment.NewLine;
+      // ============ Implementation ============
 
-      public void LogTime ( string message = "" ) { Log( DateTime.Now.ToString( "mm:ss.ffff" ) + " " + message ); }
-      public void LogTime ( string message, params object[] args ) { Log( DateTime.Now.ToString( "mm:ss.ffff" ) + " " + message, args ); }
-
-      public void Warn ( object message ) { Warn( message?.ToString() ); }
-      public void Warn ( string message ) { Log( "Warning: " + message ); }
-      public void Warn ( string message, params object[] args ) {
-         message = Format( message, args );
-         //HBS.Logging.Logger.GetLogger( "Mods" ).LogWarning( "[AttackImprovementMod] " + message );
-         Log( "Warning: " + message );
+      private void WorkerLoop () {
+         do {
+            LogEntry[] entries;
+            lock ( queue ) {
+               if ( worker == null ) return;
+               try {
+                  Thread.Sleep( 1000 ); // Throttle write frequency
+                  if ( queue.Count <= 0 ) Monitor.Wait( queue );
+               } catch ( Exception ) { }
+               entries = queue.ToArray();
+               queue.Clear();
+            }
+            WriteLog( entries );
+         } while ( true );
       }
 
-      public bool Error ( object message ) { 
-         if ( message is Exception )
-            Log( message );
-         else
-            Error( message?.ToString() );
-         return true;
-      }
-      public void Error ( string message ) { Log( "Error: " + message ); }
-      public void Error ( string message, params object[] args ) {
-         message = Format( message, args );
-         Log( "Error: " + message ); 
-      }
-
-      protected void WriteLog ( string message ) {
+      protected virtual void WriteLog ( params LogEntry[] entries ) {
+         if ( entries.Length <= 0 ) return;
+         StringBuilder buf = new StringBuilder();
+         lock ( this ) { // Not expecting settings to change frequently. Lock outside format loop for higher throughput.
+            foreach ( LogEntry line in entries ) {
+               string txt = line.message?.ToString();
+               if ( ! String.IsNullOrEmpty( txt ) ) try { 
+                  if ( IgnoreDuplicateExceptions && line.message is Exception ex ) {
+                     if ( exceptions.Contains( txt ) ) return;
+                     exceptions.Add( txt );
+                  }
+                  if ( ! String.IsNullOrEmpty( TimeFormat ) )
+                     buf.Append( line.time.ToString( TimeFormat ) );
+                  if ( LevelText != null )
+                     buf.Append( LevelText( line.level ) );
+                  if ( line.args != null && line.args.Length > 0 && txt != null ) 
+                     txt = string.Format( txt, line.args );
+                  buf.Append( txt );
+               } catch ( Exception ex ) { Console.Error.WriteLine( ex ); }
+               buf.Append( Environment.NewLine ); // Null or empty message = insert blank new line
+            }
+         }
          try {
-            File.AppendAllText( LogFile, message );
+            File.AppendAllText( LogFile, buf.ToString() );
          } catch ( Exception ex ) {
-            Console.WriteLine( message );
             Console.Error.WriteLine( ex );
          }
       }
 
-      protected static string Format ( string message, params object[] args ) {
-         try {
-            if ( args != null && args.Length > 0 )
-               return string.Format( message, args );
-         } catch ( Exception ) {}
-         return message;
+      public void Dispose () {
+         if ( queue != null ) lock ( queue ) {
+            worker = null;
+            Monitor.PulseAll( queue );
+         }
       }
    }
 
