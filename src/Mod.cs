@@ -25,7 +25,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       // Hack MechDef dependency checking?
       private const bool OverrideMechDefDependencyCheck = true;
 
-      // Will slow the loading to worse than pre-patch because of massive log
+      // Performance hit varies by machine spec.
       private const bool DebugLog = false;
 
       public static void Init () {
@@ -38,7 +38,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          Info( "Loading queue {0}.", LoadingQueue  ? "on" : "off" );
          Info( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
          Info( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
-         if ( DebugLog ) Logger.LogLevel = SourceLevels.ActivityTracing;
+         if ( DebugLog ) Logger.LogLevel = SourceLevels.Verbose;
 
          Verbo( "Some simple filters and safety shield first." );
          // Fix VFXNames.AllNames NPE
@@ -96,6 +96,11 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
          UnpatchManager = false;
          Info( "Turbine initialised" );
+      }
+
+      public override void GameStartsOnce () {
+         if ( UnpatchManager ) return;
+         Info( "Mods found: " + Join( ", ", BattleMod.GetModList() ) );
       }
 
       /* // Code to test ResourceLoadRequest subclass. https://stackoverflow.com/a/457708/893578 by JaredPar

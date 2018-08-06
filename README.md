@@ -1,4 +1,4 @@
-# Turbine 1.0.4 #
+# Turbine 1.0.5 #
 For BATTLETECH 1.1.2
 
 Turbine is a BattleTech mod that lighten and speed up the game's resource loading.
@@ -31,8 +31,8 @@ Turbine is not expected to work with mods that also speed up *resource* loading,
 
 It should otherwise work with all mods, including those that add new files for the game to load.
 
-If it doesn't work for you, you can try to use the debug version which will generate a very detailed log,
-then creates a new issue and attach it.  But it may run VERY slow because of logging, if it doesn't explode.
+If it doesn't work for you, you can try to use the debug version which will generate a pretty detailed log,
+then creates a new issue and attach it.  The log used to be very slow, but now much faster since 1.0.5.
 
 
 # How It Works
