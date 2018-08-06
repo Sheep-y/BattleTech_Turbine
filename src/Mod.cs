@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 
 namespace Sheepy.BattleTechMod.Turbine {
+   using Sheepy.CSUtils;
    using static System.Reflection.BindingFlags;
 
    #pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
@@ -37,9 +38,9 @@ namespace Sheepy.BattleTechMod.Turbine {
          Info( "Loading queue {0}.", LoadingQueue  ? "on" : "off" );
          Info( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
          Info( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
-         if ( DebugLog ) Logger.LogLevel = SourceLevels.Trace;
+         if ( DebugLog ) Logger.LogLevel = SourceLevels.ActivityTracing;
 
-         Vocal( "Some simple filters and safety shield first." );
+         Verbo( "Some simple filters and safety shield first." );
          // Fix VFXNames.AllNames NPE
          Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
          // CombatGameConstants can be loaded and reloaded many times.  Cache it for reuse and fix an NPE.
@@ -47,7 +48,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          // A pretty safe filter that disables invalid or immediately duplicating complete messages.
          Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, "Skip_DuplicateRequestCompleteMessage" );
 
-         Vocal( "Ok let's try to install real Turbine." );
+         Verbo( "Ok let's try to install real Turbine." );
          dmType = typeof( DataManager );
          backgroundRequestsCurrentAllowedWeight = dmType.GetField( "backgroundRequestsCurrentAllowedWeight", NonPublic | Instance );
          foregroundRequestsCurrentAllowedWeight = dmType.GetField( "foregroundRequestsCurrentAllowedWeight", NonPublic | Instance );
@@ -279,7 +280,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                Info( "Foreground queue ({0}) cleared. {1:n0}ms this queue, {2:n0}ms total.", foreground.Count, stopwatch.ElapsedMilliseconds, totalLoadTime += stopwatch.ElapsedMilliseconds );
                stopwatch.Reset();
             } else if ( DebugLog )
-               Vocal( "Empty foreground queue cleared by {0}.", GetKey( request ) );
+               Verbo( "Empty foreground queue cleared by {0}.", GetKey( request ) );
             isLoading.SetValue( me, false );
             SaveCache.Invoke( me, null );
             foreground.Clear();
@@ -306,7 +307,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( DebugLog ) Trace( "Notified Done Async: " + GetKey( request ) );
          CheckMechDefDependencies( request );
          if ( CheckAsyncRequestsComplete() ) {
-            if ( DebugLog ) Vocal( "Background queue cleared by {0}.", GetKey( request ) );
+            if ( DebugLog ) Verbo( "Background queue cleared by {0}.", GetKey( request ) );
             isLoadingAsync.SetValue( me, false );
             SaveCache.Invoke( me, null );
             background.Clear();
@@ -335,7 +336,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                   if ( DebugLog ) Trace( "Found MechDef dependency. Check {0} of {1}. {2} remains.", key, GetName( mech ), mechDefDependency[ mech ].Count );
                   continue;
                }
-               if ( DebugLog ) Vocal( "All depencency loaded for {0}.\n{1}", GetName( mech ) );
+               if ( DebugLog ) Verbo( "All depencency loaded for {0}.\n{1}", GetName( mech ) );
                checkingMech = null;
                mech.CheckDependenciesAfterLoad( new DataManagerLoadCompleteMessage() );
             }
@@ -390,7 +391,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                      } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
                         heavyLoad++;
                      isLoading.SetValue( me, true );
-                     if ( DebugLog ) Vocal( "Loading {0}.", GetKey( request ) );
+                     if ( DebugLog ) Verbo( "Loading {0}.", GetKey( request ) );
                      request.Load();
                      me.ResetRequestsTimeout();
                   }
@@ -434,7 +435,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                   request.NotifyLoadComplete();
                } else {
                   isLoadingAsync.SetValue( me, true );
-                  if ( DebugLog ) Vocal( "Loading Async {0}.", GetKey( request ) );
+                  if ( DebugLog ) Verbo( "Loading Async {0}.", GetKey( request ) );
                   request.Load();
                   me.ResetAsyncRequestsTimeout();
                }
@@ -490,7 +491,7 @@ namespace Sheepy.BattleTechMod.Turbine {
             if ( ! mechDefLookup.TryGetValue( key, out HashSet<MechDef> depList ) )
                mechDefLookup[ key ] = depList = new HashSet<MechDef>();
             if ( ! depList.Contains( monitoringMech ) ) {
-               if ( DebugLog ) Vocal( "   " + monitoringMech + " requested " + key );
+               if ( DebugLog ) Verbo( "   " + monitoringMech + " requested " + key );
                depList.Add( monitoringMech );
                mechDefDependency[ monitoringMech ].Add( key );
             }
@@ -513,7 +514,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                Info( "Starting new queue" );
                stopwatch.Start();
             }
-            if ( DebugLog ) Vocal( "Queued: {0} ({1})", key, dataManagerLoadRequest.GetType() );
+            if ( DebugLog ) Verbo( "Queued: {0} ({1})", key, dataManagerLoadRequest.GetType() );
             //if ( key == "19_CombatGameConstants" ) Info( Logger.Stacktrace );
             foreground.Add( key, dataManagerLoadRequest );
             if ( LoadingQueue && ! dataManagerLoadRequest.IsComplete() )
@@ -586,7 +587,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          MechDef me = __instance;
          if ( ! mechDefDependency.TryGetValue( me, out HashSet<string> toLoad ) ) {
             if ( checkingMech == null ) {
-               if ( DebugLog ) Vocal( "Allowing MechDef verify {0}.\n{1}", GetName( me ), Logger.Stacktrace );
+               if ( DebugLog ) Verbo( "Allowing MechDef verify {0}.\n{1}", GetName( me ), Logger.Stacktrace );
                checkingMech = __instance;
                return true;
             }
@@ -597,7 +598,7 @@ namespace Sheepy.BattleTechMod.Turbine {
             if ( DebugLog ) Trace( "Bypassing MechDef check {0} because waiting for {1}.", GetName( me ), toLoad.First() );
             return false;
          }
-         if ( DebugLog ) Vocal( "Allowing MechDef check {0}.", GetName( me ) );
+         if ( DebugLog ) Verbo( "Allowing MechDef check {0}.", GetName( me ) );
          mechDefDependency.Remove( me );
          return true;
       }                 catch ( Exception ex ) { return Error( ex ); } }
@@ -610,7 +611,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( UnpatchManager ) return;
          if ( monitoringMech != null ) Warn( "Already logging dependencies for " + monitoringMech.ChassisID );
          monitoringMech = __instance;
-         if ( DebugLog ) Vocal( "Start logging dependencies of {0}.", GetName( monitoringMech ) );
+         if ( DebugLog ) Verbo( "Start logging dependencies of {0}.", GetName( monitoringMech ) );
          if ( ! mechDefDependency.ContainsKey( __instance ) )
             mechDefDependency[ __instance ] = new HashSet<string>();
       }
@@ -643,10 +644,10 @@ namespace Sheepy.BattleTechMod.Turbine {
          return Error( ex );
       } }
 
-      internal static Logger ModLog = Logger.BT_LOG;
+      internal static Logger ModLog = BattleMod.BT_LOG;
 
       public static void Trace ( object message = null, params object[] args ) { ModLog.Trace( message, args ); }
-      public static void Vocal ( object message = null, params object[] args ) { ModLog.Vocal( message, args ); }
+      public static void Verbo ( object message = null, params object[] args ) { ModLog.Verbo( message, args ); }
       public static void Info  ( object message = null, params object[] args ) { ModLog.Info ( message, args ); }
       public static void Warn  ( object message = null, params object[] args ) { ModLog.Warn ( message, args ); }
       public static bool Error ( object message = null, params object[] args ) { ModLog.Error( message, args ); return true; }

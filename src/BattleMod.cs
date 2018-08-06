@@ -5,20 +5,22 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 using System;
-using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
 using UnityEngine;
 using static System.Reflection.BindingFlags;
 
 namespace Sheepy.BattleTechMod {
+   using Sheepy.CSUtils;
 
    public abstract class BattleMod : BattleModModule {
+
+      public static readonly Logger BTML_LOG = new Logger( "Mods/BTModLoader.log" );
+      public static readonly Logger BT_LOG = new Logger( "BattleTech_Data/output_log.txt" );
 
       // Basic mod info for public access, will auto load from assembly then mod.json (if exists)
       public string Version { get; protected set; } = "Unknown";
@@ -44,7 +46,7 @@ namespace Sheepy.BattleTechMod {
          get { return _LogDir; }
          protected set {
             _LogDir = value;
-            Logger = new Logger( GetLogFile(), true );
+            Logger = new Logger( GetLogFile() );
          }
       }
       public HarmonyInstance harmony { get; internal set; }
@@ -213,7 +215,7 @@ namespace Sheepy.BattleTechMod {
                   if ( match.Success ) modList.Add( match.Groups[1].Value );
                }
             } catch ( Exception ex ) {
-               Logger.BTML_LOG.Error( ex );
+               BattleMod.BTML_LOG.Error( ex );
             }
          }
          return modList.ToArray();
@@ -268,7 +270,7 @@ namespace Sheepy.BattleTechMod {
       
       private Logger _Logger;
       protected Logger Logger {
-         get { return _Logger ?? Logger.BTML_LOG; }
+         get { return _Logger ?? BattleMod.BTML_LOG; }
          set { _Logger = value; }
       }
 
@@ -342,7 +344,7 @@ namespace Sheepy.BattleTechMod {
          if ( Mod.harmony == null )
             Mod.harmony = HarmonyInstance.Create( Id );
          Mod.harmony.Patch( patched, prefix, postfix );
-         Logger.Vocal( "Patched: {0} {1} [ {2} : {3} ]", patched.DeclaringType, patched, pre, post );
+         Logger.Verbo( "Patched: {0} {1} [ {2} : {3} ]", patched.DeclaringType, patched, pre, post );
       }
 
       // ============ UTILS ============
@@ -377,14 +379,14 @@ namespace Sheepy.BattleTechMod {
          return value;
       }
 
-      public static void TryRun ( Action action ) { TryRun( Logger.BTML_LOG, action ); }
+      public static void TryRun ( Action action ) { TryRun( BattleMod.BTML_LOG, action ); }
       public static void TryRun ( Logger log, Action action ) { try {
          action.Invoke();
       } catch ( Exception ex ) { log.Error( ex ); } }
 
       public static T TryGet<T> ( T[] array, int index, T fallback = default(T), string errorArrayName = null ) {
          if ( array == null || array.Length <= index ) {
-            if ( errorArrayName != null ) Logger.BTML_LOG.Warn( $"{errorArrayName}[{index}] not found, using default {fallback}." );
+            if ( errorArrayName != null ) BattleMod.BTML_LOG.Warn( $"{errorArrayName}[{index}] not found, using default {fallback}." );
             return fallback;
          }
          return array[ index ];
@@ -392,7 +394,7 @@ namespace Sheepy.BattleTechMod {
 
       public static V TryGet<T,V> ( Dictionary<T, V> map, T key, V fallback = default(V), string errorDictName = null ) {
          if ( map == null || ! map.ContainsKey( key ) ) {
-            if ( errorDictName != null ) Logger.BTML_LOG.Warn( $"{errorDictName}[{key}] not found, using default {fallback}." );
+            if ( errorDictName != null ) BattleMod.BTML_LOG.Warn( $"{errorDictName}[{key}] not found, using default {fallback}." );
             return fallback;
          }
          return map[ key ];
@@ -416,7 +418,7 @@ namespace Sheepy.BattleTechMod {
 
       public static float RangeCheck ( string name, ref float val, float shownMin, float realMin, float realMax, float shownMax ) {
          if ( realMin > realMax || shownMin > shownMax )
-            Logger.BTML_LOG.Error( "Incorrect range check params on " + name );
+            BattleMod.BTML_LOG.Error( "Incorrect range check params on " + name );
          float orig = val;
          if ( val < realMin )
             val = realMin;
@@ -431,144 +433,9 @@ namespace Sheepy.BattleTechMod {
                   message += " >= " + shownMin;
             else
                message += " <= " + shownMin;
-            Logger.BTML_LOG.Info( message + ". Setting to " + val );
+            BattleMod.BTML_LOG.Info( message + ". Setting to " + val );
          }
          return val;
-      }
-   }
-
-   //
-   // Logging
-   //
-
-   public class Logger : IDisposable {
-
-      public static readonly Logger BTML_LOG = new Logger( "Mods/BTModLoader.log" );
-      public static readonly Logger BT_LOG = new Logger( "BattleTech_Data/output_log.txt" );
-
-      public Logger ( string file ) : this( file, false ) { }
-      public Logger ( string file, bool async ) {
-         if ( String.IsNullOrEmpty( file ) ) throw new NullReferenceException();
-         LogFile = file;
-         if ( ! async ) return;
-         queue = new List<LogEntry>();
-         worker = new Thread( WorkerLoop );
-         worker.Start();
-      }
-
-      // ============ Self Prop ============
-
-      private Func<SourceLevels,string> _LevelText = ( level ) => { //return level.ToString() + ": ";
-         if ( level <= SourceLevels.Critical ) return "CRIT "; if ( level <= SourceLevels.Error       ) return "ERR  ";
-         if ( level <= SourceLevels.Warning  ) return "WARN "; if ( level <= SourceLevels.Information ) return "INFO ";
-         if ( level <= SourceLevels.Verbose  ) return "FINE "; return "TRAC ";
-      };
-      private string _TimeFormat = "hh:mm:ss.ffff ";
-      private bool _IgnoreDuplicateExceptions = true;
-
-      protected struct LogEntry { public DateTime time; public SourceLevels level; public object message; public object[] args; }
-      private HashSet<string> exceptions = new HashSet<string>();
-      private readonly List<LogEntry> queue;
-      private Thread worker;
-
-      // ============ Public Prop ============
-
-      public static string Stacktrace { get { return new StackTrace( true ).ToString(); } }
-      public string LogFile { get; private set; }
-
-      // Settings are locked by this.  Worker is locked by queue.
-      public volatile SourceLevels LogLevel = SourceLevels.Information;
-      public Func<SourceLevels,string> LevelText { get => _LevelText; set { lock( this ) { _LevelText = value; } } }
-      public string TimeFormat { get => _TimeFormat; set { lock( this ) { _TimeFormat = value; } } }
-      public bool IgnoreDuplicateExceptions { get => _IgnoreDuplicateExceptions; set { lock( this ) {
-         _IgnoreDuplicateExceptions = value; 
-         if ( value ) { if ( exceptions == null ) exceptions = new HashSet<string>();
-         } else exceptions = null;
-      } } }
-
-      // ============ API ============
-
-      public virtual bool Exists () { return File.Exists( LogFile ); }
-
-      public virtual Exception Delete () {
-         if ( LogFile == "Mods/BTModLoader.log" || LogFile == "BattleTech_Data/output_log.txt" )
-            return new ApplicationException( "Cannot delete BTModLoader.log or BattleTech game log." );
-         try {
-            File.Delete( LogFile );
-            return null;
-         } catch ( Exception e ) { return e; }
-      }
-
-      public void Log ( SourceLevels level, object message, params object[] args ) {
-         if ( ( level & LogLevel ) != level ) return;
-         LogEntry entry = new LogEntry(){ time = DateTime.Now, level = level, message = message, args = args };
-         if ( queue == null ) lock ( this ) {
-            WriteLog( entry );
-         } else lock ( queue ) {
-            if ( worker == null ) throw new InvalidOperationException( "Logger already disposed." );
-            queue.Add( entry );
-            Monitor.PulseAll( queue );
-         }
-      }
-
-      public void Trace ( object message = null, params object[] args ) { Log( SourceLevels.ActivityTracing, message, args ); }
-      public void Vocal ( object message = null, params object[] args ) { Log( SourceLevels.Verbose, message, args ); }
-      public void Info  ( object message = null, params object[] args ) { Log( SourceLevels.Information, message, args ); }
-      public void Warn  ( object message = null, params object[] args ) { Log( SourceLevels.Warning, message, args ); }
-      public void Error ( object message = null, params object[] args ) { Log( SourceLevels.Error, message, args ); }
-
-      // ============ Implementation ============
-
-      private void WorkerLoop () {
-         do {
-            LogEntry[] entries;
-            lock ( queue ) {
-               if ( worker == null ) return;
-               try {
-                  Thread.Sleep( 1000 ); // Throttle write frequency
-                  if ( queue.Count <= 0 ) Monitor.Wait( queue );
-               } catch ( Exception ) { }
-               entries = queue.ToArray();
-               queue.Clear();
-            }
-            WriteLog( entries );
-         } while ( true );
-      }
-
-      protected virtual void WriteLog ( params LogEntry[] entries ) {
-         if ( entries.Length <= 0 ) return;
-         StringBuilder buf = new StringBuilder();
-         lock ( this ) { // Not expecting settings to change frequently. Lock outside format loop for higher throughput.
-            foreach ( LogEntry line in entries ) {
-               string txt = line.message?.ToString();
-               if ( ! String.IsNullOrEmpty( txt ) ) try { 
-                  if ( IgnoreDuplicateExceptions && line.message is Exception ex ) {
-                     if ( exceptions.Contains( txt ) ) return;
-                     exceptions.Add( txt );
-                  }
-                  if ( ! String.IsNullOrEmpty( TimeFormat ) )
-                     buf.Append( line.time.ToString( TimeFormat ) );
-                  if ( LevelText != null )
-                     buf.Append( LevelText( line.level ) );
-                  if ( line.args != null && line.args.Length > 0 && txt != null ) 
-                     txt = string.Format( txt, line.args );
-                  buf.Append( txt );
-               } catch ( Exception ex ) { Console.Error.WriteLine( ex ); }
-               buf.Append( Environment.NewLine ); // Null or empty message = insert blank new line
-            }
-         }
-         try {
-            File.AppendAllText( LogFile, buf.ToString() );
-         } catch ( Exception ex ) {
-            Console.Error.WriteLine( ex );
-         }
-      }
-
-      public void Dispose () {
-         if ( queue != null ) lock ( queue ) {
-            worker = null;
-            Monitor.PulseAll( queue );
-         }
       }
    }
 
