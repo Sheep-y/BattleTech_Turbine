@@ -51,18 +51,13 @@ namespace Sheepy.BattleTechMod.Turbine {
 
          Verbo( "Some simple filters and safety shield first." );
          if ( BackgroundLogging ) try {
-            Type LogType = typeof( HBS.Logging.FileLogAppender );
-            BackgroundLoggers = new Dictionary<HBS.Logging.FileLogAppender, Logger>();
-            streamWriter = LogType.GetField( "steamWriter", NonPublic | Instance );
-            formatter = new HBS.Logging.FormatHelper();
-            if ( streamWriter == null ) {
-               Warn( "FileLogAppender.streamWriter not found, background logger not patched." );
-            //} else if ( formatter == null ) {
-            //   Warn( "FileLogAppender.basicFormatHelper not found, background logger not patched." );
-            } else {
-               Patch( LogType, "Flush", "Override_Log_Flush", null );
-               Patch( LogType, "OnLogMessage", "Override_Log_Message", null );
-            }
+            Type LogType = typeof( HBS.Logging.Logger ).GetNestedType( "LogImpl", NonPublic );
+            mainLog = new BackgroundLogger( BT_LOG.LogFile );
+            LoggerName = LogType.GetProperty( "Name" );
+            LoggerNames = new Dictionary<object, string>();
+            Patch( LogType, "LogAtLevel",
+               new Type[]{ typeof( HBS.Logging.LogLevel ), typeof( object ), typeof( UnityEngine.Object ), typeof( Exception ), typeof( HBS.Logging.IStackTrace ) },
+               "Override_LogAtLevel", null );
          } catch ( Exception ex ) { Error( ex ); }
          // Fix VFXNames.AllNames NPE
          Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
@@ -144,27 +139,9 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       // ============ Background Log ============
 
-      private static Dictionary<HBS.Logging.FileLogAppender,Logger> BackgroundLoggers;
-      private static FieldInfo streamWriter;
-      private static HBS.Logging.FormatHelper formatter;
-
-      private static bool FindLogger ( HBS.Logging.FileLogAppender key, out Logger result ) {
-         result = null;
-         if ( BackgroundLoggers.TryGetValue( key, out result ) ) return true;
-         Info( "Creating logger for {0}", key );
-         StreamWriter writer = (StreamWriter) streamWriter.GetValue( key );
-         if ( writer == null ) return false;
-         result = new BackgroundLogger( writer );
-         Info( "Logger created" );
-         BackgroundLoggers.Add( key, result );
-         return true;
-      }
-         
-		public static bool Override_Log_Flush ( HBS.Logging.FileLogAppender __instance ) {
-         if ( ! FindLogger( __instance, out Logger log ) ) return true;
-         log.Flush();
-         return false;
-      }
+      private static Logger mainLog;
+      private static PropertyInfo LoggerName;
+      private static Dictionary<object,string> LoggerNames;
 
       internal struct HBSLog { 
          internal string logName; 
@@ -173,27 +150,26 @@ namespace Sheepy.BattleTechMod.Turbine {
          internal Exception exception; 
          internal HBS.Logging.IStackTrace location; }
 
-		public static bool Override_Log_Message ( HBS.Logging.FileLogAppender __instance, string logName, HBS.Logging.LogLevel level, object message, Exception exception, HBS.Logging.IStackTrace location ) {
-         if ( ! FindLogger( __instance, out Logger log ) ) return true;
-         Info( "Message {0}", message );
-         log.Log( SourceLevels.Information, null, new HBSLog(){ logName = logName, level = level, message = message, exception = exception, location = location } );
+		public static bool Override_LogAtLevel ( object __instance, HBS.Logging.LogLevel level, object message, Exception exception, HBS.Logging.IStackTrace location ) { try {
+         if ( DebugLog ) Info( "Message {0}", message );
+         if ( ! LoggerNames.TryGetValue( __instance, out string logName ) && LoggerName != null ) {
+            logName = LoggerName.GetValue( __instance, null )?.ToString();
+            LoggerNames.Add( __instance, logName );
+         } else
+            logName = "???";
+         //mainLog.Log( SourceLevels.Information, null, new HBSLog(){ logName = logName, level = level, message = message, exception = exception, location = location } );
          return false;
-		}
+		}                 catch ( Exception ex ) { return Error( ex ); } }
       
-      class BackgroundLogger : Logger {
-         StreamWriter stream;
-         public BackgroundLogger ( StreamWriter writer ) : base ( BattleMod.BTML_LOG.LogFile ) {
-            stream = writer;
+      internal class BackgroundLogger : Logger {
+         private static HBS.Logging.FormatHelper formatter = new HBS.Logging.FormatHelper();
+         internal BackgroundLogger ( string file ) : base ( file ) {
             AddFilter( ( line ) => {
                HBSLog log = (HBSLog) line.args[0];
                line.message = formatter.FormatMessage( log.logName, log.level, log.message, log.exception, log.location );
                line.args = null;
                return true;
             } );
-         }
-         protected override void OutputLog ( StringBuilder buf ) {
-            Info( "Flush" );
-            stream.WriteLine( buf );
          }
       }
 
