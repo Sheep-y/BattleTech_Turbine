@@ -38,12 +38,11 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static Type dmType;
 
       public override void ModStarts () {
-         Info( "Loading queue {0}.", LoadingQueue  ? "on" : "off" );
+         Info( "ALoading queue {0}.", LoadingQueue  ? "on" : "off" );
          Info( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
          Info( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
          Info( "OverrideMechCompDependencyCheck {0}.", OverrideMechCompDependencyCheck  ? "on" : "off" );
-         if ( DebugLog ) Logger.LogLevel = SourceLevels.Verbose | SourceLevels.ActivityTracing;
-         else Logger.LogLevel = SourceLevels.Verbose;
+         Logger.LogLevel = SourceLevels.Verbose;
 
          Verbo( "Some simple filters and safety shield first." );
          // Fix VFXNames.AllNames NPE
@@ -106,7 +105,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
          UnpatchManager = false;
          Info( "Turbine initialised" );
-         Logger.LogLevel = SourceLevels.Information;
+         if ( DebugLog ) Logger.LogLevel = SourceLevels.Verbose | SourceLevels.ActivityTracing;
       }
 
       public override void GameStartsOnce () {
