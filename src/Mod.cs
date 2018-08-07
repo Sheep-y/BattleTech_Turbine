@@ -15,9 +15,6 @@ namespace Sheepy.BattleTechMod.Turbine {
 #pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
    public class Mod : BattleMod {
 
-      // Redirect HBS logging to our own background log. NOT affected by UnpatchManager.
-      private const bool BackgroundLogging = true;
-
       // A kill switch to press when any things go wrong during initialisation.
       private static bool UnpatchManager = true;
 
@@ -41,7 +38,6 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static Type dmType;
 
       public override void ModStarts () {
-         Info( "BackgroundLogging {0}.", BackgroundLogging  ? "on" : "off" );
          Info( "Loading queue {0}.", LoadingQueue  ? "on" : "off" );
          Info( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
          Info( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
@@ -50,15 +46,6 @@ namespace Sheepy.BattleTechMod.Turbine {
          else Logger.LogLevel = SourceLevels.Verbose;
 
          Verbo( "Some simple filters and safety shield first." );
-         if ( BackgroundLogging ) try {
-            Type LogType = typeof( HBS.Logging.Logger ).GetNestedType( "LogImpl", NonPublic );
-            mainLog = new BackgroundLogger( BT_LOG.LogFile );
-            LoggerName = LogType.GetProperty( "Name" );
-            LoggerNames = new Dictionary<object, string>();
-            Patch( LogType, "LogAtLevel",
-               new Type[]{ typeof( HBS.Logging.LogLevel ), typeof( object ), typeof( UnityEngine.Object ), typeof( Exception ), typeof( HBS.Logging.IStackTrace ) },
-               "Override_LogAtLevel", null );
-         } catch ( Exception ex ) { Error( ex ); }
          // Fix VFXNames.AllNames NPE
          Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
          // CombatGameConstants can be loaded and reloaded many times.  Cache it for reuse and fix an NPE.
@@ -136,42 +123,6 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
          return false;
       } /**/
-
-      // ============ Background Log ============
-
-      private static Logger mainLog;
-      private static PropertyInfo LoggerName;
-      private static Dictionary<object,string> LoggerNames;
-
-      internal struct HBSLog { 
-         internal string logName; 
-         internal HBS.Logging.LogLevel level; 
-         internal object message; 
-         internal Exception exception; 
-         internal HBS.Logging.IStackTrace location; }
-
-		public static bool Override_LogAtLevel ( object __instance, HBS.Logging.LogLevel level, object message, Exception exception, HBS.Logging.IStackTrace location ) { try {
-         if ( DebugLog ) Info( "Message {0}", message );
-         if ( ! LoggerNames.TryGetValue( __instance, out string logName ) && LoggerName != null ) {
-            logName = LoggerName.GetValue( __instance, null )?.ToString();
-            LoggerNames.Add( __instance, logName );
-         } else
-            logName = "???";
-         //mainLog.Log( SourceLevels.Information, null, new HBSLog(){ logName = logName, level = level, message = message, exception = exception, location = location } );
-         return false;
-		}                 catch ( Exception ex ) { return Error( ex ); } }
-      
-      internal class BackgroundLogger : Logger {
-         private static HBS.Logging.FormatHelper formatter = new HBS.Logging.FormatHelper();
-         internal BackgroundLogger ( string file ) : base ( file ) {
-            AddFilter( ( line ) => {
-               HBSLog log = (HBSLog) line.args[0];
-               line.message = formatter.FormatMessage( log.logName, log.level, log.message, log.exception, log.location );
-               line.args = null;
-               return true;
-            } );
-         }
-      }
 
       // ============ Air Filters ============
 
