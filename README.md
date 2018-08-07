@@ -27,6 +27,8 @@ This mod does not fix memory leaks, either.  Rest your eyes.
 
 # Compatibility
 
+Compatible with original BTML v0.23 and Janxious's [BTML v0.3](https://github.com/janxious/BattleTechModLoader/releases/tag/v0.3.0-alpha).
+
 Turbine is not expected to work with mods that also speed up *resource* loading, such as WhySoSlow.
 
 It should otherwise work with all mods, including those that add new files for the game to load.
