@@ -5,7 +5,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 
-namespace Sheepy.CSUtils {
+namespace Sheepy.Logging {
    public class Logger : IDisposable {
       public Logger ( string file ) : this( file, 1000 ) { }
       public Logger ( string file, int writeDelay ) {

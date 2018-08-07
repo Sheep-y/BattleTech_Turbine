@@ -7,16 +7,21 @@ using System.Linq;
 using System.Reflection;
 
 namespace Sheepy.BattleTechMod.Turbine {
-   using Sheepy.CSUtils;
+   using Sheepy.Logging;
+   using System.IO;
+   using System.Text;
    using static System.Reflection.BindingFlags;
 
-   #pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
+#pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
    public class Mod : BattleMod {
 
-      // A kill switch to press when any things go wrong during initialisation
+      // Redirect HBS logging to our own background log. NOT affected by UnpatchManager.
+      private const bool BackgroundLogging = true;
+
+      // A kill switch to press when any things go wrong during initialisation.
       private static bool UnpatchManager = true;
 
-      // Maintain a separate loading queue from task queue
+      // Maintain a separate loading queue from task queue.
       private const bool LoadingQueue = true;
 
       // Don't timeout my load!
@@ -25,7 +30,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       // Hack MechDef/MechComponentDef dependency checking?
       private const bool OverrideMechDefDependencyCheck = true;
       private const bool OverrideMechCompDependencyCheck = true;
-
+      
       // Performance hit varies by machine spec.
       private const bool DebugLog = false;
 
@@ -36,12 +41,29 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static Type dmType;
 
       public override void ModStarts () {
+         Info( "BackgroundLogging {0}.", BackgroundLogging  ? "on" : "off" );
          Info( "Loading queue {0}.", LoadingQueue  ? "on" : "off" );
          Info( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
          Info( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
+         Info( "OverrideMechCompDependencyCheck {0}.", OverrideMechCompDependencyCheck  ? "on" : "off" );
          if ( DebugLog ) Logger.LogLevel = SourceLevels.Verbose | SourceLevels.ActivityTracing;
+         else Logger.LogLevel = SourceLevels.Verbose;
 
          Verbo( "Some simple filters and safety shield first." );
+         if ( BackgroundLogging ) try {
+            Type LogType = typeof( HBS.Logging.FileLogAppender );
+            BackgroundLoggers = new Dictionary<HBS.Logging.FileLogAppender, Logger>();
+            streamWriter = LogType.GetField( "steamWriter", NonPublic | Instance );
+            formatter = new HBS.Logging.FormatHelper();
+            if ( streamWriter == null ) {
+               Warn( "FileLogAppender.streamWriter not found, background logger not patched." );
+            //} else if ( formatter == null ) {
+            //   Warn( "FileLogAppender.basicFormatHelper not found, background logger not patched." );
+            } else {
+               Patch( LogType, "Flush", "Override_Log_Flush", null );
+               Patch( LogType, "OnLogMessage", "Override_Log_Message", null );
+            }
+         } catch ( Exception ex ) { Error( ex ); }
          // Fix VFXNames.AllNames NPE
          Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
          // CombatGameConstants can be loaded and reloaded many times.  Cache it for reuse and fix an NPE.
@@ -96,11 +118,13 @@ namespace Sheepy.BattleTechMod.Turbine {
             Patch( typeof( MechDef ), "RequestDependencies", "StartLogMechDefDependencies", "StopLogMechDefDependencies" );
          }
          if ( OverrideMechCompDependencyCheck ) {
+            LoadedComp = new HashSet<MechComponentDef>();
             Patch( typeof( MechComponentDef ), "DependenciesLoaded", null, "Record_CompDependenciesLoaded" );
             Patch( typeof( MechComponentDef ), "CheckDependenciesAfterLoad", "Skip_CheckCompDependenciesAfterLoad", "Cleanup_CheckCompDependenciesAfterLoad" );
          }
          UnpatchManager = false;
          Info( "Turbine initialised" );
+         Logger.LogLevel = SourceLevels.Information;
       }
 
       public override void GameStartsOnce () {
@@ -117,6 +141,61 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
          return false;
       } /**/
+
+      // ============ Background Log ============
+
+      private static Dictionary<HBS.Logging.FileLogAppender,Logger> BackgroundLoggers;
+      private static FieldInfo streamWriter;
+      private static HBS.Logging.FormatHelper formatter;
+
+      private static bool FindLogger ( HBS.Logging.FileLogAppender key, out Logger result ) {
+         result = null;
+         if ( BackgroundLoggers.TryGetValue( key, out result ) ) return true;
+         Info( "Creating logger for {0}", key );
+         StreamWriter writer = (StreamWriter) streamWriter.GetValue( key );
+         if ( writer == null ) return false;
+         result = new BackgroundLogger( writer );
+         Info( "Logger created" );
+         BackgroundLoggers.Add( key, result );
+         return true;
+      }
+         
+		public static bool Override_Log_Flush ( HBS.Logging.FileLogAppender __instance ) {
+         if ( ! FindLogger( __instance, out Logger log ) ) return true;
+         log.Flush();
+         return false;
+      }
+
+      internal struct HBSLog { 
+         internal string logName; 
+         internal HBS.Logging.LogLevel level; 
+         internal object message; 
+         internal Exception exception; 
+         internal HBS.Logging.IStackTrace location; }
+
+		public static bool Override_Log_Message ( HBS.Logging.FileLogAppender __instance, string logName, HBS.Logging.LogLevel level, object message, Exception exception, HBS.Logging.IStackTrace location ) {
+         if ( ! FindLogger( __instance, out Logger log ) ) return true;
+         Info( "Message {0}", message );
+         log.Log( SourceLevels.Information, null, new HBSLog(){ logName = logName, level = level, message = message, exception = exception, location = location } );
+         return false;
+		}
+      
+      class BackgroundLogger : Logger {
+         StreamWriter stream;
+         public BackgroundLogger ( StreamWriter writer ) : base ( BattleMod.BTML_LOG.LogFile ) {
+            stream = writer;
+            AddFilter( ( line ) => {
+               HBSLog log = (HBSLog) line.args[0];
+               line.message = formatter.FormatMessage( log.logName, log.level, log.message, log.exception, log.location );
+               line.args = null;
+               return true;
+            } );
+         }
+         protected override void OutputLog ( StringBuilder buf ) {
+            Info( "Flush" );
+            stream.WriteLine( buf );
+         }
+      }
 
       // ============ Air Filters ============
 
@@ -332,7 +411,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       public static bool Override_NotifyFileLoadFailed ( DataManager __instance, DataManager.DataManagerLoadRequest request ) { try {
          if ( UnpatchManager ) return true;
          string key = GetKey( request );
-         Info( "Notified Failed: {0}", key );
+         if ( DebugLog ) Trace ( "Notified Failed: {0}", key );
          if ( foreground.Remove( key ) )
             NotifyFileLoaded( __instance, request );
          else if ( background.Remove( key ) )
@@ -639,7 +718,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       // ============ MechComponentDef Bypass ============
 
       private static MechComponentDef checkingComp;
-      private static HashSet<MechComponentDef> LoadedComp = new HashSet<MechComponentDef>();
+      private static HashSet<MechComponentDef> LoadedComp;
 
       public static void Record_CompDependenciesLoaded ( MechComponentDef __instance, bool __result ) {
          if ( __result && __instance.statusEffects != null && __instance.statusEffects.Length > 0 )

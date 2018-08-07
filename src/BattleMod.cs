@@ -15,7 +15,7 @@ using UnityEngine;
 using static System.Reflection.BindingFlags;
 
 namespace Sheepy.BattleTechMod {
-   using Sheepy.CSUtils;
+   using Sheepy.Logging;
 
    public abstract class BattleMod : BattleModModule {
 
