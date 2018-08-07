@@ -502,24 +502,8 @@ namespace Sheepy.BattleTechMod.Turbine {
          lastIdentifier = identifier;
          DataManager me = __instance;
          string key = GetKey( resourceType, identifier );
-         if ( monitoringMech != null ) {
-            if ( ! dependee.TryGetValue( key, out HashSet<object> depList ) )
-               dependee[ key ] = depList = new HashSet<object>();
-            if ( ! depList.Contains( monitoringMech ) ) {
-               if ( DebugLog ) Verbo( "   " + monitoringMech + " requested " + key );
-               depList.Add( monitoringMech );
-               depender[ monitoringMech ].Add( key );
-            }
-         }
-         if ( monitoringComp != null ) {
-            if ( ! dependee.TryGetValue( key, out HashSet<object> depList ) )
-               dependee[ key ] = depList = new HashSet<object>();
-            if ( ! depList.Contains( monitoringComp ) ) {
-               if ( DebugLog ) Verbo( "   " + monitoringComp + " requested " + key );
-               depList.Add( monitoringComp );
-               depender[ monitoringComp ].Add( key );
-            }
-         }
+         if ( monitoringMech != null ) LogDependee( monitoringMech, key );
+         if ( monitoringComp != null ) LogDependee( monitoringComp, key );
          foreground.TryGetValue( key, out DataManager.DataManagerLoadRequest dataManagerLoadRequest );
          if ( dataManagerLoadRequest != null ) {
             if ( dataManagerLoadRequest.State != DataManager.DataManagerLoadRequest.RequestState.Complete || !dataManagerLoadRequest.DependenciesLoaded( dataManagerLoadRequest.RequestWeight.RequestWeight ) ) {
@@ -546,6 +530,16 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
          return false;
       }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
+
+      private static void LogDependee ( object monitored, string key ) {
+         if ( ! dependee.TryGetValue( key, out HashSet<object> depList ) )
+            dependee[ key ] = depList = new HashSet<object>();
+         if ( ! depList.Contains( monitored ) ) {
+            if ( DebugLog ) Verbo( "   " + GetName( monitored ) + " requested " + key );
+            depList.Add( monitored );
+            depender[ monitored ].Add( key );
+         }
+      }
 
       public static bool Override_SetLoadRequestWeights ( DataManager __instance, uint foregroundRequestWeight, uint backgroundRequestWeight ) { try {
          if ( UnpatchManager ) return true;
@@ -611,7 +605,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          MechDef me = __instance;
          if ( ! depender.TryGetValue( me, out HashSet<string> toLoad ) ) {
             if ( checkingMech == null ) {
-               if ( DebugLog ) Verbo( "Allowing MechDef verify {0}.\n{1}", GetName( me ), Logger.Stacktrace );
+               if ( DebugLog ) Verbo( "Allowing MechDef verify {0}.", GetName( me ) );
                checkingMech = __instance;
                return true;
             }
@@ -656,7 +650,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          MechComponentDef me = __instance;
          if ( ! depender.TryGetValue( me, out HashSet<string> toLoad ) ) {
             if ( checkingComp == null ) {
-               if ( DebugLog ) Verbo( "Allowing MechComponentDef verify {0}.\n{1}", GetName( me ), Logger.Stacktrace );
+               if ( DebugLog ) Verbo( "Allowing MechComponentDef verify {0}.", GetName( me ) );
                checkingComp = __instance;
                return true;
             }
