@@ -24,7 +24,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       // Hack MechDef/MechComponentDef dependency checking?
       private const bool OverrideMechDefDependencyCheck = true;
-      private const bool OverrideMechCompDependencyCheck = false;
+      private const bool OverrideMechCompDependencyCheck = true;
 
       // Performance hit varies by machine spec.
       private const bool DebugLog = false;
@@ -97,7 +97,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
          if ( OverrideMechCompDependencyCheck ) {
             Patch( typeof( MechComponentDef ), "CheckDependenciesAfterLoad", "Skip_CheckCompDependenciesAfterLoad", "Cleanup_CheckCompDependenciesAfterLoad" );
-            Patch( typeof( MechComponentDef ), "RequestDependencies", "StartLogMechCompDefDependencies", "StopLogMechCompDefDependencies" );
+            Patch( typeof( MechComponentDef ), "RequestDependencies", "StartLogCompDefDependencies", "StopLogCompDefDependencies" );
          }
          UnpatchManager = false;
          Info( "Turbine initialised" );
@@ -511,6 +511,15 @@ namespace Sheepy.BattleTechMod.Turbine {
                depender[ monitoringMech ].Add( key );
             }
          }
+         if ( monitoringComp != null ) {
+            if ( ! dependee.TryGetValue( key, out HashSet<object> depList ) )
+               dependee[ key ] = depList = new HashSet<object>();
+            if ( ! depList.Contains( monitoringComp ) ) {
+               if ( DebugLog ) Verbo( "   " + monitoringComp + " requested " + key );
+               depList.Add( monitoringComp );
+               depender[ monitoringComp ].Add( key );
+            }
+         }
          foreground.TryGetValue( key, out DataManager.DataManagerLoadRequest dataManagerLoadRequest );
          if ( dataManagerLoadRequest != null ) {
             if ( dataManagerLoadRequest.State != DataManager.DataManagerLoadRequest.RequestState.Complete || !dataManagerLoadRequest.DependenciesLoaded( dataManagerLoadRequest.RequestWeight.RequestWeight ) ) {
@@ -624,7 +633,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       public static void StartLogMechDefDependencies ( MechDef __instance ) {
          if ( UnpatchManager ) return;
-         if ( monitoringMech != null ) Warn( "Already logging dependencies for " + monitoringMech.ChassisID );
+         if ( monitoringMech != null ) Warn( "Already logging dependencies for " + GetName( monitoringMech ) );
          monitoringMech = __instance;
          if ( DebugLog ) Verbo( "Start logging dependencies of {0}.", GetName( monitoringMech ) );
          if ( ! depender.ContainsKey( __instance ) )
@@ -636,7 +645,50 @@ namespace Sheepy.BattleTechMod.Turbine {
          monitoringMech = null;
       }
 
-      // ============ MechCoomponentDef Bypass ============
+      // ============ MechComponentDef Bypass ============
+
+      private static MechComponentDef monitoringComp, checkingComp;
+
+      public static bool Skip_CheckCompDependenciesAfterLoad ( MechComponentDef __instance, MessageCenterMessage message ) { try {
+         //__state = false;
+         if ( UnpatchManager ) return true;
+         if ( ! ( message is DataManagerRequestCompleteMessage ) ) return false;
+         MechComponentDef me = __instance;
+         if ( ! depender.TryGetValue( me, out HashSet<string> toLoad ) ) {
+            if ( checkingComp == null ) {
+               if ( DebugLog ) Verbo( "Allowing MechComponentDef verify {0}.\n{1}", GetName( me ), Logger.Stacktrace );
+               checkingComp = __instance;
+               return true;
+            }
+            if ( DebugLog ) Trace( "Bypassing MechComponentDef check {0} because checking {1}.", GetName( me ), GetName( checkingMech ) );
+            return false;
+         }
+         if ( toLoad.Count > 0 ) {
+            if ( DebugLog ) Trace( "Bypassing MechComponentDef check {0} because waiting for {1}.", GetName( me ), toLoad.First() );
+            return false;
+         }
+         if ( DebugLog ) Verbo( "Allowing MechComponentDef check {0}.", GetName( me ) );
+         depender.Remove( me );
+         return true;
+      }                 catch ( Exception ex ) { return Error( ex ); } }
+
+      public static void Cleanup_CheckCompDependenciesAfterLoad ( MechComponentDef __instance ) {
+         if ( checkingComp == __instance ) checkingComp = null;
+      }
+
+      public static void StartLogCompDefDependencies ( MechComponentDef __instance ) {
+         if ( UnpatchManager ) return;
+         if ( monitoringComp != null ) Warn( "Already logging dependencies for " + GetName( monitoringComp ) );
+         monitoringComp = __instance;
+         if ( DebugLog ) Verbo( "Start logging dependencies of {0}.", GetName( monitoringComp ) );
+         if ( ! depender.ContainsKey( __instance ) )
+            depender[ __instance ] = new HashSet<string>();
+      }
+
+      public static void StopLogCompDefDependencies () {
+         if ( DebugLog ) Trace( "Stop logging dependencies of {0}.", GetName( monitoringComp ) );
+         monitoringComp = null;
+      }
 
       // ============ Safety System: Kill Switch and Logging ============
 
