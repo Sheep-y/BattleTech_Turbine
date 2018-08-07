@@ -20,18 +20,19 @@ namespace Sheepy.CSUtils {
 
       // ============ Self Prop ============
 
-      private Func<SourceLevels,string> _LevelText = ( level ) => { //return level.ToString() + ": ";
+      protected Func<SourceLevels,string> _LevelText = ( level ) => { //return level.ToString() + ": ";
          if ( level <= SourceLevels.Critical ) return "CRIT "; if ( level <= SourceLevels.Error       ) return "ERR  ";
          if ( level <= SourceLevels.Warning  ) return "WARN "; if ( level <= SourceLevels.Information ) return "INFO ";
          if ( level <= SourceLevels.Verbose  ) return "FINE "; return "TRAC ";
       };
-      private string _TimeFormat = "hh:mm:ss.ffff ", _Prefix = null, _Postfix = null;
-      private bool _IgnoreDuplicateExceptions = true;
+      protected string _TimeFormat = "hh:mm:ss.ffff ", _Prefix = null, _Postfix = null;
+      protected List<Func<LogEntry,bool>> _Filters = null;
+      protected bool _IgnoreDuplicateExceptions = true;
 
-      protected struct LogEntry { public DateTime time; public SourceLevels level; public object message; public object[] args; }
+      public struct LogEntry { public DateTime time; public SourceLevels level; public object message; public object[] args; }
 
       // Worker states locked by queue which is private.
-      private HashSet<string> exceptions;
+      private HashSet<string> exceptions = new HashSet<string>(); // Double as public get/set lock object
       private readonly List<LogEntry> queue;
       private Thread worker;
       private int writeDelay;
@@ -41,16 +42,22 @@ namespace Sheepy.CSUtils {
       public static string Stacktrace { get { return new StackTrace( true ).ToString(); } }
       public string LogFile { get; private set; }
 
-      // Settings are locked by this.
       public volatile SourceLevels LogLevel = SourceLevels.Information;
-      public Func<SourceLevels,string> LevelText { get => _LevelText; set { lock( this ) { _LevelText = value; } } }
-      public string TimeFormat { get => _TimeFormat; set { lock( this ) { _TimeFormat = value; } } }
-      public string Prefix { get => _Prefix; set { lock( this ) { _Prefix = value; } } }
-      public string Postfix { get => _Postfix; set { lock( this ) { _Postfix = value; } } }
-      public bool IgnoreDuplicateExceptions { get => _IgnoreDuplicateExceptions; set { lock( this ) {
-         _IgnoreDuplicateExceptions = value;
-         if ( ! value ) exceptions = null;
-      } } }
+      public Func<SourceLevels,string> LevelText { 
+         get { lock( exceptions ) { return _LevelText; } }
+         set { lock( exceptions ) { _LevelText = value; } } }
+      public string TimeFormat { 
+         get { lock( exceptions ) { return _TimeFormat; } }
+         set { lock( exceptions ) { _TimeFormat = value; } } }
+      public string Prefix { 
+         get { lock( exceptions ) { return _Prefix; } }
+         set { lock( exceptions ) { _Prefix = value; } } }
+      public string Postfix { 
+         get { lock( exceptions ) { return _Postfix; } }
+         set { lock( exceptions ) { _Postfix = value; } } }
+      public bool IgnoreDuplicateExceptions { 
+         get { lock( exceptions ) { return _IgnoreDuplicateExceptions; } }
+         set { lock( exceptions ) { _IgnoreDuplicateExceptions = value; } } }
 
       // ============ API ============
 
@@ -72,10 +79,27 @@ namespace Sheepy.CSUtils {
             if ( worker == null ) throw new InvalidOperationException( "Logger already disposed." );
             queue.Add( entry );
             Monitor.Pulse( queue );
-         } else lock ( this ) {
-            OutputLog( entry );
+         } else lock ( queue ) {
+            OutputLog( _Filters, entry );
          }
       }
+
+      // Each filter may modify the line, and may return false to exclude an input line from logging.
+      // First input is unformatted log line, second input is log entry.
+      public bool AddFilter ( Func<LogEntry,bool> filter ) { lock( queue ) {
+         if ( filter == null ) return false;
+         if ( _Filters == null ) _Filters = new List<Func<LogEntry,bool>>();
+         else if ( _Filters.Contains( filter ) ) return false;
+         _Filters.Add( filter );
+         return true;
+      } }
+
+      public bool RemoveFilter ( Func<LogEntry,bool> filter ) { lock( queue ) {
+         if ( filter == null || _Filters == null ) return false;
+         bool result = _Filters.Remove( filter );
+         if ( result && _Filters.Count <= 0 ) _Filters = null;
+         return result;
+      } }
 
       public void Trace ( object message = null, params object[] args ) { Log( SourceLevels.ActivityTracing, message, args ); }
       public void Verbo ( object message = null, params object[] args ) { Log( SourceLevels.Verbose, message, args ); }
@@ -102,42 +126,56 @@ namespace Sheepy.CSUtils {
          } while ( true );
       }
 
-      private void OutputLog ( params LogEntry[] entries ) {
+      public void Flush () {
+         Func<LogEntry,bool>[] filters;
+         LogEntry[] entries;
+         lock ( queue ) {
+            filters = _Filters?.ToArray();
+            entries = queue.ToArray();
+            queue.Clear();
+         }
+         if ( entries.Length > 0 )
+            OutputLog( filters, entries );
+      }
+
+      private void OutputLog ( IEnumerable<Func<LogEntry,bool>> filters, params LogEntry[] entries ) {
          if ( entries.Length <= 0 ) return;
          StringBuilder buf = new StringBuilder();
-         lock ( this ) { // Not expecting settings to change frequently. Lock outside format loop for higher throughput.
-            foreach ( LogEntry line in entries ) {
+         lock ( exceptions ) { // Not expecting settings to change frequently. Lock outside format loop for higher throughput.
+            foreach ( LogEntry line in entries ) try {
+               if ( filters != null ) foreach ( Func<LogEntry,bool> filter in filters ) try {
+                  if ( ! filter( line ) ) continue;
+               } catch ( Exception ) { }
                string txt = line.message?.ToString();
-               if ( ! String.IsNullOrEmpty( txt ) ) try {
-                  if ( SkipMessage( line, txt ) ) continue;
+               if ( ! String.IsNullOrEmpty( txt ) ) {
+                  if ( ! AllowMessagePass( line, txt ) ) continue;
                   FormatMessage( buf, line, txt );
-               } catch ( Exception ex ) { Console.Error.WriteLine( ex ); }
+               }
                NewLine( buf, line ); // Null or empty message = insert blank new line.
-            }
+            } catch ( Exception ex ) { Console.Error.WriteLine( ex ); }
          }
          OutputLog( buf );
       }
 
       // Override to control which message get logged.
-      protected virtual bool SkipMessage ( LogEntry line, string txt ) {
+      protected virtual bool AllowMessagePass ( LogEntry line, string txt ) {
          if ( line.message is Exception ex && IgnoreDuplicateExceptions ) {
-            if ( exceptions == null ) exceptions = new HashSet<string>();
-            if ( exceptions.Contains( txt ) ) return true;
+            if ( exceptions.Contains( txt ) ) return false;
             exceptions.Add( txt );
          }
-         return false;
+         return true;
       }
 
       // Override to change line/entry format.
       protected virtual void FormatMessage ( StringBuilder buf, LogEntry line, string txt ) {
-         if ( ! String.IsNullOrEmpty( TimeFormat ) )
-            buf.Append( line.time.ToString( TimeFormat ) );
-         if ( LevelText != null )
-            buf.Append( LevelText( line.level ) );
-         buf.Append( Prefix );
+         if ( ! String.IsNullOrEmpty( _TimeFormat ) )
+            buf.Append( line.time.ToString( _TimeFormat ) );
+         if ( _LevelText != null )
+            buf.Append( _LevelText( line.level ) );
+         buf.Append( _Prefix );
          if ( line.args != null && line.args.Length > 0 && txt != null )
             txt = string.Format( txt, line.args );
-         buf.Append( txt ).Append( Postfix );
+         buf.Append( txt ).Append( _Postfix );
       }
 
       // Called after every entry, even null or empty.
@@ -152,16 +190,6 @@ namespace Sheepy.CSUtils {
          } catch ( Exception ex ) {
             Console.Error.WriteLine( ex );
          }
-      }
-
-      public void Flush () {
-         LogEntry[] entries;
-         lock ( queue ) {
-            entries = queue.ToArray();
-            queue.Clear();
-         }
-         if ( entries.Length > 0 )
-            OutputLog( entries );
       }
 
       public void Dispose () {
