@@ -22,8 +22,9 @@ namespace Sheepy.BattleTechMod.Turbine {
       // Don't timeout my load!
       private const bool NeverTimeout = true;
 
-      // Hack MechDef dependency checking?
+      // Hack MechDef/MechComponentDef dependency checking?
       private const bool OverrideMechDefDependencyCheck = true;
+      private const bool OverrideMechCompDependencyCheck = false;
 
       // Performance hit varies by machine spec.
       private const bool DebugLog = false;
@@ -80,8 +81,8 @@ namespace Sheepy.BattleTechMod.Turbine {
          background = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          if ( LoadingQueue )
             foregroundLoading = new HashSet<DataManager.DataManagerLoadRequest>();
-         mechDefDependency = new Dictionary<MechDef, HashSet<string>>();
-         mechDefLookup = new Dictionary<string, HashSet<MechDef>>();
+         depender = new Dictionary<object, HashSet<string>>();
+         dependee = new Dictionary<string, HashSet<object>>();
          /* // Code to patch all resource load requests. Good luck with it.
          Type ReqType = typeof( DataManager.ResourceLoadRequest<> );
          // I _hope_ I got everything in the primary assembly.  Not going to check the whole game!
@@ -91,8 +92,12 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
          */
          if ( OverrideMechDefDependencyCheck ) {
-            Patch( typeof( MechDef ), "CheckDependenciesAfterLoad", "Skip_CheckDependenciesAfterLoad", "Cleanup_CheckDependenciesAfterLoad" );
+            Patch( typeof( MechDef ), "CheckDependenciesAfterLoad", "Skip_CheckMechDependenciesAfterLoad", "Cleanup_CheckMechDependenciesAfterLoad" );
             Patch( typeof( MechDef ), "RequestDependencies", "StartLogMechDefDependencies", "StopLogMechDefDependencies" );
+         }
+         if ( OverrideMechCompDependencyCheck ) {
+            Patch( typeof( MechComponentDef ), "CheckDependenciesAfterLoad", "Skip_CheckCompDependenciesAfterLoad", "Cleanup_CheckCompDependenciesAfterLoad" );
+            Patch( typeof( MechComponentDef ), "RequestDependencies", "StartLogMechCompDefDependencies", "StopLogMechCompDefDependencies" );
          }
          UnpatchManager = false;
          Info( "Turbine initialised" );
@@ -191,7 +196,11 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static Stopwatch stopwatch;
       private static long totalLoadTime = 0;
 
-      private static string GetName ( MechDef mech ) { return mech == null ? "null" : ( mech.Name + " (" + mech.ChassisID + ")" ); }
+      private static string GetName ( object obj ) { 
+         if ( obj is MechDef mech ) return mech.Name + " (" + mech.ChassisID + ")";
+         if ( obj is MechComponentDef comp ) return comp.Description.Model;
+         return obj?.ToString() ?? null;
+      }
       private static string GetKey ( DataManager.DataManagerLoadRequest request ) { return GetKey( request.ResourceType, request.ResourceId ); }
       private static string GetKey ( BattleTechResourceType resourceType, string id ) { return (int) resourceType + "_" + id; }
 
@@ -206,8 +215,8 @@ namespace Sheepy.BattleTechMod.Turbine {
          background.Clear();
          if ( LoadingQueue )
             foregroundLoading.Clear();
-         mechDefDependency.Clear();
-         mechDefLookup.Clear();
+         depender.Clear();
+         dependee.Clear();
          if ( DebugLog ) Info( "All queues cleared." );
          manager = __instance;
       }
@@ -291,8 +300,8 @@ namespace Sheepy.BattleTechMod.Turbine {
             foreground.Clear();
             if ( LoadingQueue )
                foregroundLoading.Clear();
-            mechDefDependency.Clear();
-            mechDefLookup.Clear();
+            depender.Clear();
+            dependee.Clear();
             center.PublishMessage( new DataManagerLoadCompleteMessage() );
          }
       }
@@ -333,17 +342,18 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static void CheckMechDefDependencies ( DataManager.DataManagerLoadRequest request ) {
          string key = GetKey( request );
-         if ( ! mechDefLookup.TryGetValue( key, out HashSet<MechDef> mechs ) ) return;
-         mechDefLookup.Remove( key );
-         foreach ( MechDef mech in mechs ) {
-            if ( mechDefDependency.TryGetValue( mech, out HashSet<string> list ) && list.Remove( key ) ) {
-               if ( mechDefDependency[ mech ].Count > 0 ) {
-                  if ( DebugLog ) Trace( "Found MechDef dependency. Check {0} of {1}. {2} remains.", key, GetName( mech ), mechDefDependency[ mech ].Count );
+         if ( ! dependee.TryGetValue( key, out HashSet<object> dependents ) ) return;
+         dependee.Remove( key );
+         foreach ( object dependent in dependents ) {
+            if ( depender.TryGetValue( dependent, out HashSet<string> list ) && list.Remove( key ) ) {
+               if ( list.Count > 0 ) {
+                  if ( DebugLog ) Trace( "Found MechDef dependency. Check {0} of {1}. {2} remains.", key, GetName( dependent ), list.Count );
                   continue;
                }
-               if ( DebugLog ) Verbo( "All depencency loaded for {0}.\n{1}", GetName( mech ) );
+               if ( DebugLog ) Verbo( "All depencency loaded for {0}.\n{1}", GetName( dependent ) );
                checkingMech = null;
-               mech.CheckDependenciesAfterLoad( new DataManagerLoadCompleteMessage() );
+               if ( dependent is MechDef mech )
+                  mech.CheckDependenciesAfterLoad( new DataManagerLoadCompleteMessage() );
             }
          }
       }
@@ -493,12 +503,12 @@ namespace Sheepy.BattleTechMod.Turbine {
          DataManager me = __instance;
          string key = GetKey( resourceType, identifier );
          if ( monitoringMech != null ) {
-            if ( ! mechDefLookup.TryGetValue( key, out HashSet<MechDef> depList ) )
-               mechDefLookup[ key ] = depList = new HashSet<MechDef>();
+            if ( ! dependee.TryGetValue( key, out HashSet<object> depList ) )
+               dependee[ key ] = depList = new HashSet<object>();
             if ( ! depList.Contains( monitoringMech ) ) {
                if ( DebugLog ) Verbo( "   " + monitoringMech + " requested " + key );
                depList.Add( monitoringMech );
-               mechDefDependency[ monitoringMech ].Add( key );
+               depender[ monitoringMech ].Add( key );
             }
          }
          foreground.TryGetValue( key, out DataManager.DataManagerLoadRequest dataManagerLoadRequest );
@@ -581,16 +591,16 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       // ============ MechDef Bypass ============
 
-      private static Dictionary<MechDef, HashSet<string>> mechDefDependency;
-      private static Dictionary<string, HashSet<MechDef>> mechDefLookup;
+      private static Dictionary<object, HashSet<string>> depender;
+      private static Dictionary<string, HashSet<object>> dependee;
       private static MechDef monitoringMech, checkingMech;
 
-      public static bool Skip_CheckDependenciesAfterLoad ( MechDef __instance, MessageCenterMessage message ) { try {
+      public static bool Skip_CheckMechDependenciesAfterLoad ( MechDef __instance, MessageCenterMessage message ) { try {
          //__state = false;
          if ( UnpatchManager ) return true;
          if ( ! ( message is DataManagerRequestCompleteMessage ) ) return false;
          MechDef me = __instance;
-         if ( ! mechDefDependency.TryGetValue( me, out HashSet<string> toLoad ) ) {
+         if ( ! depender.TryGetValue( me, out HashSet<string> toLoad ) ) {
             if ( checkingMech == null ) {
                if ( DebugLog ) Verbo( "Allowing MechDef verify {0}.\n{1}", GetName( me ), Logger.Stacktrace );
                checkingMech = __instance;
@@ -604,11 +614,11 @@ namespace Sheepy.BattleTechMod.Turbine {
             return false;
          }
          if ( DebugLog ) Verbo( "Allowing MechDef check {0}.", GetName( me ) );
-         mechDefDependency.Remove( me );
+         depender.Remove( me );
          return true;
       }                 catch ( Exception ex ) { return Error( ex ); } }
 
-      public static void Cleanup_CheckDependenciesAfterLoad ( MechDef __instance ) {
+      public static void Cleanup_CheckMechDependenciesAfterLoad ( MechDef __instance ) {
          if ( checkingMech == __instance ) checkingMech = null;
       }
 
@@ -617,8 +627,8 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( monitoringMech != null ) Warn( "Already logging dependencies for " + monitoringMech.ChassisID );
          monitoringMech = __instance;
          if ( DebugLog ) Verbo( "Start logging dependencies of {0}.", GetName( monitoringMech ) );
-         if ( ! mechDefDependency.ContainsKey( __instance ) )
-            mechDefDependency[ __instance ] = new HashSet<string>();
+         if ( ! depender.ContainsKey( __instance ) )
+            depender[ __instance ] = new HashSet<string>();
       }
 
       public static void StopLogMechDefDependencies () {
@@ -626,6 +636,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          monitoringMech = null;
       }
 
+      // ============ MechCoomponentDef Bypass ============
 
       // ============ Safety System: Kill Switch and Logging ============
 
