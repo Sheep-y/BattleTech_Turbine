@@ -39,7 +39,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          Info( "Loading queue {0}.", LoadingQueue  ? "on" : "off" );
          Info( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
          Info( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
-         if ( DebugLog ) Logger.LogLevel = SourceLevels.Verbose;
+         if ( DebugLog ) Logger.LogLevel = SourceLevels.Verbose | SourceLevels.ActivityTracing;
 
          Verbo( "Some simple filters and safety shield first." );
          // Fix VFXNames.AllNames NPE
@@ -96,8 +96,8 @@ namespace Sheepy.BattleTechMod.Turbine {
             Patch( typeof( MechDef ), "RequestDependencies", "StartLogMechDefDependencies", "StopLogMechDefDependencies" );
          }
          if ( OverrideMechCompDependencyCheck ) {
+            Patch( typeof( MechComponentDef ), "DependenciesLoaded", null, "Record_CompDependenciesLoaded" );
             Patch( typeof( MechComponentDef ), "CheckDependenciesAfterLoad", "Skip_CheckCompDependenciesAfterLoad", "Cleanup_CheckCompDependenciesAfterLoad" );
-            Patch( typeof( MechComponentDef ), "RequestDependencies", "StartLogCompDefDependencies", "StopLogCompDefDependencies" );
          }
          UnpatchManager = false;
          Info( "Turbine initialised" );
@@ -198,7 +198,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static string GetName ( object obj ) { 
          if ( obj is MechDef mech ) return mech.Name + " (" + mech.ChassisID + ")";
-         if ( obj is MechComponentDef comp ) return comp.Description.Model;
+         if ( obj is MechComponentDef comp ) return comp.Description.Manufacturer + " " + comp.Description.Name;
          return obj?.ToString() ?? null;
       }
       private static string GetKey ( DataManager.DataManagerLoadRequest request ) { return GetKey( request.ResourceType, request.ResourceId ); }
@@ -503,7 +503,6 @@ namespace Sheepy.BattleTechMod.Turbine {
          DataManager me = __instance;
          string key = GetKey( resourceType, identifier );
          if ( monitoringMech != null ) LogDependee( monitoringMech, key );
-         if ( monitoringComp != null ) LogDependee( monitoringComp, key );
          foreground.TryGetValue( key, out DataManager.DataManagerLoadRequest dataManagerLoadRequest );
          if ( dataManagerLoadRequest != null ) {
             if ( dataManagerLoadRequest.State != DataManager.DataManagerLoadRequest.RequestState.Complete || !dataManagerLoadRequest.DependenciesLoaded( dataManagerLoadRequest.RequestWeight.RequestWeight ) ) {
@@ -599,9 +598,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static MechDef monitoringMech, checkingMech;
 
       public static bool Skip_CheckMechDependenciesAfterLoad ( MechDef __instance, MessageCenterMessage message ) { try {
-         //__state = false;
          if ( UnpatchManager ) return true;
-         if ( ! ( message is DataManagerRequestCompleteMessage ) ) return false;
          MechDef me = __instance;
          if ( ! depender.TryGetValue( me, out HashSet<string> toLoad ) ) {
             if ( checkingMech == null ) {
@@ -641,47 +638,32 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       // ============ MechComponentDef Bypass ============
 
-      private static MechComponentDef monitoringComp, checkingComp;
+      private static MechComponentDef checkingComp;
+      private static HashSet<MechComponentDef> LoadedComp = new HashSet<MechComponentDef>();
 
-      public static bool Skip_CheckCompDependenciesAfterLoad ( MechComponentDef __instance, MessageCenterMessage message ) { try {
-         //__state = false;
+      public static void Record_CompDependenciesLoaded ( MechComponentDef __instance, bool __result ) {
+         if ( __result && __instance.statusEffects != null && __instance.statusEffects.Length > 0 )
+            LoadedComp.Add( __instance );
+      }
+
+      public static bool Skip_CheckCompDependenciesAfterLoad ( MechComponentDef __instance ) { try {
          if ( UnpatchManager ) return true;
-         if ( ! ( message is DataManagerRequestCompleteMessage ) ) return false;
          MechComponentDef me = __instance;
-         if ( ! depender.TryGetValue( me, out HashSet<string> toLoad ) ) {
-            if ( checkingComp == null ) {
-               if ( DebugLog ) Verbo( "Allowing MechComponentDef verify {0}.", GetName( me ) );
-               checkingComp = __instance;
-               return true;
+         if ( checkingComp == null ) {
+            if ( me.statusEffects != null && me.statusEffects.Length > 0 && LoadedComp.Contains( me ) ) {
+               if ( DebugLog ) Trace( "Skipping MechComponentDef check {0} because already finished loading.", GetName( me ) );
+               return false;
             }
-            if ( DebugLog ) Trace( "Bypassing MechComponentDef check {0} because checking {1}.", GetName( me ), GetName( checkingMech ) );
-            return false;
+            if ( DebugLog ) Verbo( "Allowing MechComponentDef verify {0}.", GetName( me ) );
+            checkingComp = __instance;
+            return true;
          }
-         if ( toLoad.Count > 0 ) {
-            if ( DebugLog ) Trace( "Bypassing MechComponentDef check {0} because waiting for {1}.", GetName( me ), toLoad.First() );
-            return false;
-         }
-         if ( DebugLog ) Verbo( "Allowing MechComponentDef check {0}.", GetName( me ) );
-         depender.Remove( me );
-         return true;
+         if ( DebugLog ) Trace( "Skipping MechComponentDef check {0} because checking {1}.", GetName( me ), GetName( checkingComp ) );
+         return false;
       }                 catch ( Exception ex ) { return Error( ex ); } }
 
       public static void Cleanup_CheckCompDependenciesAfterLoad ( MechComponentDef __instance ) {
          if ( checkingComp == __instance ) checkingComp = null;
-      }
-
-      public static void StartLogCompDefDependencies ( MechComponentDef __instance ) {
-         if ( UnpatchManager ) return;
-         if ( monitoringComp != null ) Warn( "Already logging dependencies for " + GetName( monitoringComp ) );
-         monitoringComp = __instance;
-         if ( DebugLog ) Verbo( "Start logging dependencies of {0}.", GetName( monitoringComp ) );
-         if ( ! depender.ContainsKey( __instance ) )
-            depender[ __instance ] = new HashSet<string>();
-      }
-
-      public static void StopLogCompDefDependencies () {
-         if ( DebugLog ) Trace( "Stop logging dependencies of {0}.", GetName( monitoringComp ) );
-         monitoringComp = null;
       }
 
       // ============ Safety System: Kill Switch and Logging ============

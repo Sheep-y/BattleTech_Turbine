@@ -42,7 +42,7 @@ The mod has a few functional parts.
 Before any work starts, two safety rails are installed around `VFXNamesDef.AllNames` and `CombatGameConstants.CreateFromSaved`,
 to cache their results so that repeated calls can be served immediately and to avoid potential errors.
 
-First is the request filter.  A cheap and safe check is done after every `DataManagerRequestCompleteMessage` creation.
+Real work starts with the request filter.  A cheap and safe check is done after every `DataManagerRequestCompleteMessage` creation.
 If the request is invalid or same as last one, it is filtered out.
 
 Then we have the compressor.
@@ -57,6 +57,9 @@ If anything cause the MechDef to re-enter the engine, it will now bypass its ori
 This continues until all its dependencies are processed.  Then the MechDef is manually summoned back and allowed pass.
 Its bypass will stay open; only one MechDef may pass through the engine at any one time.
 Others are still bypassed when one is in the pipeline.
+
+A smaller but different bypass is also installed for `MechComponentDef`.
+It does not trace requests; instead it monitors `MechComponentDef.DependenciesLoaded` to tell whether a component check may be bypassed.
 
 Thanks to the bypass, the engine can skip lots of inefficient work for a higher horsepower, and can fit into a smaller call stack.
 
