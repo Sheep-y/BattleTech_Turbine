@@ -1,11 +1,7 @@
 using System;
-using System.Reflection;
 using System.Text;
 
 namespace Sheepy.BattleTechMod.Turbine {
-   using System.Collections.Generic;
-   using System.IO;
-   using System.Text.RegularExpressions;
    using static Mod;
    using static System.Reflection.BindingFlags;
 
@@ -17,42 +13,8 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static int pos;
 
-      /* Original code
-		private static string StripHBSCommentsFromJSON ( string json ) {
-         string str = string.Empty;
-         string format = "{0}(.*?)\\{1}";
-         foreach ( var keyValuePair in commentSurroundPairs ) {
-            str = str + string.Format( format, keyValuePair.Key, keyValuePair.Value ) + "|";
-         }
-         string str2 = "\"((\\\\[^\\n]|[^\"\\n])*)\"|";
-         string str3 = "@(\"[^\"]*\")+";
-         string pattern = str + str2 + str3;
-         return Regex.Replace( json, pattern, delegate ( Match me ) {
-            foreach ( var keyValuePair2 in commentSurroundPairs ) {
-               if ( me.Value.StartsWith( keyValuePair2.Key ) || me.Value.EndsWith( keyValuePair2.Value ) ) {
-                  return string.Empty;
-               }
-            }
-            return me.Value;
-         }, RegexOptions.Singleline );
-      }
-
-      private static readonly Dictionary<string, string> commentSurroundPairs = new Dictionary<string, string> {
-         { "//*", "*"+"/" },
-         { "<!--", "-->" }
-      }; */
-
       public static bool Override_StripComments ( ref String __result, String json ) { try {
-         //Info( "=== Input ===\n{0}", json );
          __result = StripComments( json );
-         /*
-         string origResult = StripHBSCommentsFromJSON( json );
-         if ( __result != origResult ) {
-            Error( "Diff result. Data exported." );
-            File.WriteAllText( "input.js", origResult );
-            File.WriteAllText( "output.js", __result );
-         }
-         */
          return false;
       }                 catch ( Exception ex ) { return Error( ex ); } }
 

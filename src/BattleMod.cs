@@ -86,7 +86,7 @@ namespace Sheepy.BattleTechMod {
       protected virtual void Setup () {
          Logger.Delete();
          Logger.Info( "{0:yyyy-MM-dd} Loading {1} Version {2} @ {3}", DateTime.Now, Name, Version, BaseDir );
-         Logger.Info( "Game Version {0}" + Environment.NewLine, VersionInfo.ProductVersion );
+         Logger.Info( "Game Version {0}, Harmony Version {1}" + Environment.NewLine, VersionInfo.ProductVersion, typeof(HarmonyInstance).Assembly.GetName().Version );
       }
 
       public static string Idify ( string text ) { return Join( string.Empty, new Regex( "\\W+" ).Split( text ), UppercaseFirst ); }
@@ -341,8 +341,10 @@ namespace Sheepy.BattleTechMod {
             Logger.Error( "Method not found. Cannot patch [ {0} : {1} ]", pre, post );
             return;
          }
-         if ( Mod.harmony == null )
+         if ( Mod.harmony == null ) {
             Mod.harmony = HarmonyInstance.Create( Id );
+            Logger.Info( "Harmony instance \"{0}\"", Id );
+         }
          Mod.harmony.Patch( patched, prefix, postfix );
          Logger.Verbo( "Patched: {0} {1} [ {2} : {3} ]", patched.DeclaringType, patched, pre, post );
       }
