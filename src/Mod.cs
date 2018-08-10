@@ -181,8 +181,20 @@ namespace Sheepy.BattleTechMod.Turbine {
             __result = nameCache;
             return false;
          }
-         // May throw NPE if this.persistentDamage or this.persistentCrit is null.
-         // No code change them, so maybe they are unloaded due to low memory conditions or other reasons.
+         // Will throw NPE if this.persistentDamage or this.persistentCrit is null.
+         // No code change them, and NPE is reported to happens without Turbine.
+         VFXNamesDef? def = BattleTechGame?.Combat?.Constants?.VFXNames;
+         if ( def != null ) try {
+            VFXNamesDef check = def.GetValueOrDefault();
+            if ( check.persistentCrit == null || check.persistentDamage == null ) {
+               Warn( "VFXNamesDef.persistentCrit and/or VFXNamesDef.persistentDamage is null on first load, using hardcoded list." );
+               check.persistentDamage = "SmokeLrg_loop,SmokeSm_loop,ElectricalSm_loop,ElectricalLrg_loop,Sparks,ElectricalFailure_loop"
+                  .Split(',').Select( e => new VFXNameDef(){ name = $"vfxPrfPrtl_mechDmg{e}" } ).ToArray();
+               check.persistentCrit = "FireLrg_loop,FireSm_loop,SmokeSpark_loop"
+                  .Split(',').Select( e => new VFXNameDef(){ name = $"vfxPrfPrtl_mechDmg{e}" } ).ToArray();
+               typeof( CombatGameConstants ).GetProperty( "VFXNames" ).SetValue( BattleTechGame.Combat.Constants, check, null );
+            }
+         } catch ( Exception ex ) { Error( ex ); }
          return true;
       }
 
