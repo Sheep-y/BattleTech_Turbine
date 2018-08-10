@@ -9,10 +9,8 @@ using System.Reflection;
 namespace Sheepy.BattleTechMod.Turbine {
    using Sheepy.Logging;
    using System.IO;
-   using System.Text;
    using static System.Reflection.BindingFlags;
 
-#pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
    public class Mod : BattleMod {
 
       // A kill switch to press when any things go wrong during initialisation.
@@ -26,8 +24,11 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       // Hack MechDef/MechComponentDef dependency checking?
       private const bool OverrideMechDefDependencyCheck = true;
-      private const bool OverrideMechCompDependencyCheck = true;
-      
+      private const bool OverrideMechCompDependencyCheck = false;
+
+      // Override JSONSerializationUtility.StripHBSCommentsFromJSON?
+      private const bool OverrideStripCommentsFromJSON = true;
+
       // Performance hit varies by machine spec.
       private const bool DebugLog = false;
 
@@ -37,6 +38,13 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static Type dmType;
 
+      static void Main () {
+         string input = File.ReadAllText( "data.json" );
+         Console.Write( JsonPatch.StripComments( input ) );
+         Console.ReadKey();
+      }
+
+#pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
       public override void ModStarts () {
          Info( "ALoading queue {0}.", LoadingQueue  ? "on" : "off" );
          Info( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
@@ -105,6 +113,10 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
          UnpatchManager = false;
          Info( "Turbine initialised" );
+
+         if ( OverrideStripCommentsFromJSON )
+            Add( new JsonPatch() );
+
          if ( DebugLog ) Logger.LogLevel = SourceLevels.Verbose | SourceLevels.ActivityTracing;
       }
 
@@ -402,7 +414,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                   if ( ! request.ManifestEntryValid ) {
                      logger.LogError( string.Format( "LoadRequest for {0} of type {1} has an invalid manifest entry. Any requests for this object will fail.", request.ResourceId, request.ResourceType ) );
                      request.NotifyLoadFailed();
-                  } else if ( !request.RequestWeight.RequestAllowed ) {
+                  } else if ( ! request.RequestWeight.RequestAllowed ) {
                      request.NotifyLoadComplete();
                   } else {
                      if ( request.RequestWeight.RequestWeight == 10u ) {
@@ -692,6 +704,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       } catch ( Exception ex ) {
          return Error( ex );
       } }
+#pragma warning restore CS0162 // Enable warning of unreachable code
 
       internal static Logger ModLog = BattleMod.BT_LOG;
 
@@ -701,5 +714,4 @@ namespace Sheepy.BattleTechMod.Turbine {
       public static void Warn  ( object message = null, params object[] args ) { ModLog.Warn ( message, args ); }
       public static bool Error ( object message = null, params object[] args ) { ModLog.Error( message, args ); return true; }
    }
-   #pragma warning restore CS0162 // Enable warning of unreachable code
 }
