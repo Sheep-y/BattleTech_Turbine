@@ -1,15 +1,16 @@
 ﻿using BattleTech;
 using BattleTech.Data;
+using Sheepy.Logging;
 using System;
 using System.Diagnostics;
 using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace Sheepy.BattleTechMod.Turbine {
-   using Sheepy.Logging;
-   using System.IO;
-   using System.Text.RegularExpressions;
    using static System.Reflection.BindingFlags;
 
    public class Mod : BattleMod {
@@ -164,24 +165,50 @@ namespace Sheepy.BattleTechMod.Turbine {
       }
 
       
-      public static string CombatConstantJSON;
+      public static byte[] CombatConstantJSON;
       private static MethodInfo LoadMoraleResources, LoadMaintenanceResources;
 
       public static bool Override_CombatGameConstants_LoadFromManifest ( CombatGameConstants __instance ) { try {
          if ( CombatConstantJSON == null ) return true;
-			__instance.FromJSON( CombatConstantJSON );
+         __instance.FromJSON( UnZipStr( CombatConstantJSON ) );
          LoadMoraleResources?.Invoke( __instance, null );
          LoadMaintenanceResources?.Invoke( __instance, null );
          return false;
       }                 catch ( Exception ex ) { return Error( ex ); } }
 
       public static void Save_CombatGameConstants_Data ( MessageCenterMessage message ) {
-         if ( message is DataManagerRequestCompleteMessage<string> msg && msg.ResourceType == BattleTechResourceType.CombatGameConstants ) {
-            CombatConstantJSON = Regex.Replace( JsonPatch.StripComments( msg.Resource ), @"(?<=\n)\s+", "" );
-            TryRun( ModLog, () => {
-               LoadMoraleResources = typeof( CombatGameConstants ).GetMethod( "LoadMoraleResources", NonPublic | Instance );
-               LoadMaintenanceResources = typeof( CombatGameConstants ).GetMethod( "LoadMaintenanceResources", NonPublic | Instance );
-            } );
+         if ( message is DataManagerRequestCompleteMessage<string> msg && msg.ResourceType == BattleTechResourceType.CombatGameConstants ) { try {
+            string json = Regex.Replace( JsonPatch.StripComments( msg.Resource ), @"(?<=\n)\s+", "" ); // 48K to 32K
+            fastJSON.JSON.Parse( json );
+            CombatConstantJSON = ZipStr( json ); // 32K to 8K
+            LoadMoraleResources = typeof( CombatGameConstants ).GetMethod( "LoadMoraleResources", NonPublic | Instance );
+            LoadMaintenanceResources = typeof( CombatGameConstants ).GetMethod( "LoadMaintenanceResources", NonPublic | Instance );
+         } catch ( Exception ex ) {
+            CombatConstantJSON = null;
+            Warn( ex );
+         } }
+      }
+
+      // https://stackoverflow.com/a/2118959/893578
+      public static byte[] ZipStr ( String str ) {
+         using ( MemoryStream output = new MemoryStream() ) {
+            using ( DeflateStream gzip = new DeflateStream( output, CompressionMode.Compress ) ) {
+               using ( StreamWriter writer = new StreamWriter( gzip, System.Text.Encoding.UTF8 ) ) {
+                  writer.Write( str );
+               }
+            }
+            return output.ToArray();
+         }
+      }
+
+      // https://stackoverflow.com/a/2118959/893578
+      public static string UnZipStr ( byte[] input ) {
+         using ( MemoryStream inputStream = new MemoryStream( input ) ) {
+            using ( DeflateStream gzip = new DeflateStream( inputStream, CompressionMode.Decompress ) ) {
+               using ( StreamReader reader = new StreamReader( gzip, System.Text.Encoding.UTF8 ) ) {
+                  return reader.ReadToEnd();
+               }
+            }
          }
       }
 
