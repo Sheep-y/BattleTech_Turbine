@@ -63,7 +63,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       public static void Save_CombatGameConstants_Data ( MessageCenterMessage message ) {
          if ( message is DataManagerRequestCompleteMessage<string> msg && msg.ResourceType == BattleTechResourceType.CombatGameConstants ) { try {
-            string json = Regex.Replace( JsonPatch.StripComments( msg.Resource ), @"(?<=\n)\s+", "" ); // 48K to 32K
+            string json = Regex.Replace( DataProcess.StripComments( msg.Resource ), @"(?<=\n)\s+", "" ); // 48K to 32K
             fastJSON.JSON.Parse( json );
             CombatConstantJSON = ZipStr( json ); // 32K to 8K
             LoadMoraleResources = typeof( CombatGameConstants ).GetMethod( "LoadMoraleResources", NonPublic | Instance );

@@ -5,7 +5,7 @@ namespace Sheepy.BattleTechMod.Turbine {
    using static Mod;
    using static System.Reflection.BindingFlags;
 
-   public class JsonPatch : BattleModModule {
+   public class DataProcess : BattleModModule {
 
       public override void ModStarts () {
          Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", NonPublic | Static, "Override_StripComments", null );

@@ -40,7 +40,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       static void Main () {
          string input = File.ReadAllText( "data.json" );
-         Console.Write( JsonPatch.StripComments( input ) );
+         Console.Write( DataProcess.StripComments( input ) );
          Console.ReadKey();
       }
 
@@ -102,7 +102,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          Info( "Turbine initialised" );
 
          if ( OverrideStripCommentsFromJSON )
-            Add( new JsonPatch() );
+            Add( new DataProcess() );
 
          if ( DebugLog ) Logger.LogLevel = SourceLevels.Verbose | SourceLevels.ActivityTracing;
       }
