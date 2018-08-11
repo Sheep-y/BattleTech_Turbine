@@ -472,7 +472,8 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( ! depList.Contains( monitored ) ) {
             if ( DebugLog ) Verbo( "   " + GetName( monitored ) + " requested " + key );
             depList.Add( monitored );
-            depender[ monitored ].Add( key );
+            if ( depender.TryGetValue( monitored, out HashSet<string> dependList ) )
+               dependList.Add( key );
          }
       }
 
