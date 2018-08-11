@@ -94,37 +94,50 @@ Loop:
       // ============ Data Hash ============
 
       private static byte[] SecretKey;
+      private const int JobPerLoop = 16;
 
       public static bool MultiThreadDataHash ( ref string __result, params BattleTechResourceType[] typesToHash ) { try {
          if ( SecretKey == null ) {
             SecretKey = (byte[]) typeof( DataManager ).GetField( "secret_key", NonPublic | Static ).GetValue( null );
             if ( SecretKey == null ) throw new NullReferenceException( "DataManager.secret_key is null" );
          }
-         BattleTechResourceLocator battleTechResourceLocator = new BattleTechResourceLocator();
+
          int counter = 0;
+         BattleTechResourceLocator battleTechResourceLocator = new BattleTechResourceLocator();
          Dictionary<int,VersionManifestEntry> manifestList = new Dictionary<int,VersionManifestEntry>( 4000 ); // Vanilla has 900+. Mods may adds a lot more.
          foreach ( BattleTechResourceType type in typesToHash )
             foreach ( VersionManifestEntry versionManifestEntry in battleTechResourceLocator.AllEntriesOfResource( type ) )
                manifestList.Add( counter++, versionManifestEntry );
 
          Dictionary<int,byte[]> hashSet = new Dictionary<int,byte[]>();
-         int threadCount = 1, doneThread = 0;
+         int threadCount = 5, doneThread = 0;
          for ( int i = 0 ; i < threadCount ; i++ ) {
-            new Thread( () => { 
+            new Thread( () => {
                HMACSHA256 hasher = new HMACSHA256( SecretKey );
-               for ( int j = 0 ; j < counter ; j++ ) {
-                  VersionManifestEntry versionManifestEntry = manifestList[ j ];
-                  if ( ! versionManifestEntry.IsAssetBundled && ! versionManifestEntry.IsResourcesAsset && File.Exists( versionManifestEntry.FilePath ) ) {
-                     try {
-                        using ( FileStream fileStream = new FileStream( versionManifestEntry.FilePath, FileMode.Open, FileAccess.Read ) ) {
-                           hashSet.Add( j, hasher.ComputeHash( fileStream ) );
+               Dictionary<int,VersionManifestEntry> taskList = new Dictionary<int, VersionManifestEntry>( JobPerLoop );
+               Dictionary<int,byte[]> resultList = new Dictionary<int,byte[]>();
+               do {
+                  lock( manifestList ) {
+                     foreach ( var manifest in manifestList.Take( JobPerLoop ) ) taskList.Add( manifest.Key, manifest.Value );
+                     foreach ( int id in taskList.Keys ) manifestList.Remove( id );
+                  }
+                  if ( taskList.Count <= 0 ) break;
+                  foreach ( var task in taskList ) {
+                     VersionManifestEntry versionManifestEntry = task.Value;
+                     if ( ! versionManifestEntry.IsAssetBundled && ! versionManifestEntry.IsResourcesAsset && File.Exists( versionManifestEntry.FilePath ) ) {
+                        try {
+                           using ( FileStream fileStream = new FileStream( versionManifestEntry.FilePath, FileMode.Open, FileAccess.Read ) ) {
+                              resultList.Add( task.Key, hasher.ComputeHash( fileStream ) );
+                           }
+                        } catch ( Exception ex ) {
+                           Error( "Could not calculate hash on {0}: {1}", versionManifestEntry.FilePath, ex );
                         }
-                     } catch ( Exception ex ) {
-                        Error( "Could not calculate hash on {0}: {1}", versionManifestEntry.FilePath, ex );
                      }
                   }
-               }
+                  taskList.Clear();
+               } while ( true );
                lock( hashSet ) { 
+                  foreach ( var result in resultList ) hashSet.Add( result.Key, result.Value );
                   ++doneThread;
                   if ( doneThread == threadCount )
                      Monitor.Pulse( hashSet );
