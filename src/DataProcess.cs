@@ -6,9 +6,9 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 
 namespace Sheepy.BattleTechMod.Turbine {
-   using System.Threading;
    using static Mod;
    using static System.Reflection.BindingFlags;
 
@@ -97,20 +97,22 @@ Loop:
       private const int JobPerLoop = 16;
 
       public static bool MultiThreadDataHash ( ref string __result, params BattleTechResourceType[] typesToHash ) { try {
+         Verbo( "Prepare to get data hash." );
          if ( SecretKey == null ) {
             SecretKey = (byte[]) typeof( DataManager ).GetField( "secret_key", NonPublic | Static ).GetValue( null );
             if ( SecretKey == null ) throw new NullReferenceException( "DataManager.secret_key is null" );
          }
 
-         int counter = 0;
+         int manifestCounter = 0;
          BattleTechResourceLocator battleTechResourceLocator = new BattleTechResourceLocator();
          Dictionary<int,VersionManifestEntry> manifestList = new Dictionary<int,VersionManifestEntry>( 4000 ); // Vanilla has 900+. Mods may adds a lot more.
          foreach ( BattleTechResourceType type in typesToHash )
             foreach ( VersionManifestEntry versionManifestEntry in battleTechResourceLocator.AllEntriesOfResource( type ) )
-               manifestList.Add( counter++, versionManifestEntry );
+               manifestList.Add( manifestCounter++, versionManifestEntry );
 
          Dictionary<int,byte[]> hashSet = new Dictionary<int,byte[]>();
-         int threadCount = 5, doneThread = 0;
+         int threadCount = Math.Max( 2, Math.Min( Environment.ProcessorCount*2, 32 ) ), doneThread = 0;
+         Info( "Calculating data hash with {0} threads", threadCount );
          for ( int i = 0 ; i < threadCount ; i++ ) {
             new Thread( () => {
                HMACSHA256 hasher = new HMACSHA256( SecretKey );
@@ -122,17 +124,15 @@ Loop:
                      foreach ( int id in taskList.Keys ) manifestList.Remove( id );
                   }
                   if ( taskList.Count <= 0 ) break;
-                  foreach ( var task in taskList ) {
+                  foreach ( var task in taskList ) try {
                      VersionManifestEntry versionManifestEntry = task.Value;
-                     if ( ! versionManifestEntry.IsAssetBundled && ! versionManifestEntry.IsResourcesAsset && File.Exists( versionManifestEntry.FilePath ) ) {
-                        try {
-                           using ( FileStream fileStream = new FileStream( versionManifestEntry.FilePath, FileMode.Open, FileAccess.Read ) ) {
-                              resultList.Add( task.Key, hasher.ComputeHash( fileStream ) );
-                           }
-                        } catch ( Exception ex ) {
-                           Error( "Could not calculate hash on {0}: {1}", versionManifestEntry.FilePath, ex );
-                        }
+                     if ( versionManifestEntry.IsAssetBundled || versionManifestEntry.IsResourcesAsset || ! File.Exists( versionManifestEntry.FilePath ) )
+                        continue;
+                     using ( FileStream fileStream = new FileStream( versionManifestEntry.FilePath, FileMode.Open, FileAccess.Read ) ) {
+                        resultList.Add( task.Key, hasher.ComputeHash( fileStream ) );
                      }
+                  } catch ( Exception ex ) {
+                     Error( "Cannot hash {0}: {1}", task.Value.FilePath, ex );
                   }
                   taskList.Clear();
                } while ( true );
@@ -145,14 +145,14 @@ Loop:
             } ).Start();
          }
 
+         battleTechResourceLocator = null;
          HMACSHA256 hmacsha = new HMACSHA256( SecretKey );
          List<byte[]> hashList = new List<byte[]>();
-         lock( hashSet ) { 
+         lock( hashSet ) {
             if ( doneThread != threadCount )
                Monitor.Wait( hashSet );
          }
-         for ( int i = 0 ; i < counter ; i++ )
-            hashList.Add( hashSet[i] );
+         for ( int i = 0 ; i < manifestCounter ; i++ ) hashList.Add( hashSet[i] );
          __result = Convert.ToBase64String( hmacsha.ComputeHash( hashList.SelectMany( ( byte[] x ) => x ).ToArray<byte>() ) );
          Verbo( "Hash = {0}", __result );
          return false;
