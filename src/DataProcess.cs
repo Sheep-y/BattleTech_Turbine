@@ -15,15 +15,24 @@ namespace Sheepy.BattleTechMod.Turbine {
 
    public class DataProcess : BattleModModule {
 
-      public static void LogStart() { Info( "Start" ); }
-      public static void LogEnd() { Info( "End" ); }
+      // Replace HBS's regex comment parser with a manually coded high performance parser
+      private const bool StripJSON = true;
+
+      // Calculate data hash in multi-thread
+      private const bool MultiThreadHash = true;
+
+      // Optimise regex of CSVReader.ReadRow
+      private const bool OptimiseReadRowRegex = true;
+
+      //public static void LogStart() { Info( "Start" ); }
+      //public static void LogEnd() { Info( "End" ); }
 
       public override void ModStarts () {
-         Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", NonPublic | Static, "Override_StripComments", null );
-         Patch( typeof( DataManager ), "GetDataHash", Static, "MultiThreadDataHash", null );
-
-         // CSVReader uses private field parameter, supported by Harmony 1.2 an up.
-         if ( new Version( "1.2" ).CompareTo( typeof( Harmony.HarmonyInstance ).Assembly.GetName().Version ) <= 0 ) {
+         if ( StripJSON )
+            Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", NonPublic | Static, "Override_StripComments", null );
+         if ( MultiThreadHash )
+            Patch( typeof( DataManager ), "GetDataHash", Static, "MultiThreadDataHash", null );
+         if ( OptimiseReadRowRegex ) {
             csvField = new Regex("((?<=\\\")[^\\\"]*(?=\\\"(,|$)+)|(?<=,|^)[^,\\\"]*(?=,|$))", RegexOptions.Multiline | RegexOptions.Compiled );
             Patch( typeof( CSVReader ), "ReadRow", new Type[]{}, "Override_CSVReader_ReadRow", null );
          }
