@@ -1,4 +1,4 @@
-# Turbine 1.0.5 #
+# Turbine 1.0.6 #
 For BATTLETECH 1.1.2
 
 Turbine is a BattleTech mod that lighten and speed up the game's resource loading.
@@ -60,9 +60,6 @@ This continues until all its dependencies are processed.  Then the MechDef is ma
 Its bypass will stay open; only one MechDef may pass through the engine at any one time.
 Others are still bypassed when one is in the pipeline.
 
-A smaller but different bypass is also installed for `MechComponentDef`.
-It does not trace requests; instead it monitors `MechComponentDef.DependenciesLoaded` to tell whether a component check may be bypassed.
-
 Thanks to the bypass, the engine can skip lots of inefficient work for a higher horsepower, and can fit into a smaller call stack.
 
 Requests that are not bypassed will go through a turbine, that the original engine does not have.
@@ -79,6 +76,9 @@ This is best happened during part installation.  If any part does not fit, perha
 
 It can also happens when the game is running.  Unlike Hollywood movie, though, engine repairs rarely work mid-flight.
 In the whole bypass development, it saved a running game once.  That once is the *only* reason the explosive bolts are kept.
+
+After the engine upgrade, the original exhause pipe is replaced with a turbine nozzle that speeds up json processing.
+Air filters and nozzle are outside the core engine, and are unaffected by kill switch.
 
 Finally, the mod has a blackbox logger.  It keeps a non-persistent log of installed parts and general performance of the turbine.
 But its real value is its sensors, installed in all parts, that allow it to log explosions.  Records are kept in  Log_Turbine.txt.
