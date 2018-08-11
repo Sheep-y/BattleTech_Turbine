@@ -6,11 +6,10 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 namespace Sheepy.BattleTechMod.Turbine {
-   using System.Collections;
-   using System.Text.RegularExpressions;
    using static Mod;
    using static System.Reflection.BindingFlags;
 
@@ -22,7 +21,12 @@ namespace Sheepy.BattleTechMod.Turbine {
       public override void ModStarts () {
          Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", NonPublic | Static, "Override_StripComments", null );
          Patch( typeof( DataManager ), "GetDataHash", Static, "MultiThreadDataHash", null );
-         Patch( typeof( CSVReader ), "ReadRow", new Type[]{}, "Override_CSVReader_ReadRow", null );
+
+         // CSVReader uses private field parameter, supported by Harmony 1.2 an up.
+         if ( new Version( "1.2" ).CompareTo( typeof( Harmony.HarmonyInstance ).Assembly.GetName().Version ) <= 0 ) {
+            csvField = new Regex("((?<=\\\")[^\\\"]*(?=\\\"(,|$)+)|(?<=,|^)[^,\\\"]*(?=,|$))", RegexOptions.Multiline | RegexOptions.Compiled );
+            Patch( typeof( CSVReader ), "ReadRow", new Type[]{}, "Override_CSVReader_ReadRow", null );
+         }
       }
 
       public static string Unescape ( string value ) {
@@ -111,7 +115,7 @@ Loop:
       private const int JobPerLoop = 16, HashSize = 32;
 
       public static bool MultiThreadDataHash ( ref string __result, params BattleTechResourceType[] typesToHash ) { try {
-         Verbo( "Prepare to get data hash." );
+         if ( DebugLog ) Verbo( "Prepare to get data hash." );
          if ( SecretKey == null ) {
             SecretKey = (byte[]) typeof( DataManager ).GetField( "secret_key", NonPublic | Static ).GetValue( null );
             if ( SecretKey == null ) throw new NullReferenceException( "DataManager.secret_key is null" );
@@ -136,7 +140,7 @@ Loop:
             pos += HashSize;
          }
          __result = Convert.ToBase64String( new HMACSHA256( SecretKey ).ComputeHash( allHash ) );
-         Verbo( "Hash = {0}", __result );
+         if ( DebugLog ) Verbo( "Hash = {0}", __result );
          return false;
       }                 catch ( Exception ex ) { return Error( ex ); } }
 
@@ -182,7 +186,7 @@ Loop:
       // ============ CSVReader ============
 
       // Compiled and shared regex
-      private static Regex regex = new Regex("((?<=\\\")[^\\\"]*(?=\\\"(,|$)+)|(?<=,|^)[^,\\\"]*(?=,|$))", RegexOptions.Multiline | RegexOptions.Compiled );
+      private static Regex csvField;
 
       public static bool Override_CSVReader_ReadRow ( ref List<string> __result, ref int ___activeIdx, ref string[] ___rows ) {
          if ( ___activeIdx < 0 || ___activeIdx >= ___rows.Length ) {
@@ -190,7 +194,7 @@ Loop:
             return false;
          }
          __result = new List<string>();
-         foreach ( object match in regex.Matches( ___rows[ ___activeIdx++ ] ) )
+         foreach ( object match in csvField.Matches( ___rows[ ___activeIdx++ ] ) )
             __result.Add( Unescape( match.ToString() ) );
          return false;
       }
