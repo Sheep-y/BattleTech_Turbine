@@ -11,7 +11,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", NonPublic | Static, "Override_StripComments", null );
       }
 
-      private static int pos;
+      // ============ Json Process ============
 
       public static bool Override_StripComments ( ref String __result, String json ) { try {
          __result = StripComments( json );
@@ -19,7 +19,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       }                 catch ( Exception ex ) { return Error( ex ); } }
 
       public static String StripComments ( String json ) {
-         pos = 0;
+         int pos = 0;
          StringBuilder buf = new StringBuilder( json.Length );
          do {
 Loop:
@@ -29,18 +29,18 @@ Loop:
                   char b = Peek( json, i+1 );
                   if ( b == '/' ) {
                      if ( Peek( json, i+2 ) == '*' ) { // //* to */
-                        if ( SkipWS( buf, json, i, i+3, "*/" ) ) goto Loop;
+                        if ( SkipWS( buf, json, ref pos, i, i+3, "*/" ) ) goto Loop;
                      } /*else {                          // Single line comment // to \n, conflict with url string and requires string state tracking
-                        if ( Skip( buf, json, i, i+2, "\n" ) ) {
+                        if ( Skip( buf, json, ref pos, i, i+2, "\n" ) ) {
                            buf.Append( '\n' );
                            goto Loop;
                         }
                      }*/
                   } else if ( b == '*' ) { // /* to */
-                     if ( SkipWS( buf, json, i, i+2, "*/" ) ) goto Loop;
+                     if ( SkipWS( buf, json, ref pos, i, i+2, "*/" ) ) goto Loop;
                   }
                } else if ( a == '<' && Match( json, i+1, "!--" ) ) { // <!-- to -->
-                  if ( SkipWS( buf, json, i, i+4, "-->" ) ) goto Loop;
+                  if ( SkipWS( buf, json, ref pos, i, i+4, "-->" ) ) goto Loop;
                }
             }
             // Nothing found, copy everything and break
@@ -55,8 +55,8 @@ Loop:
          String sub = json.Substring( pos, txt.Length );
          return sub == txt;
       }
-      private static bool SkipWS ( StringBuilder buf, String json, int skipStart, int headEnd, String until ) {
-         if ( ! Skip( buf, json, skipStart, headEnd, until ) ) return false;
+      private static bool SkipWS ( StringBuilder buf, String json, ref int pos, int skipStart, int headEnd, String until ) {
+         if ( ! Skip( buf, json, ref pos, skipStart, headEnd, until ) ) return false;
          int len = json.Length;
          while ( pos < len ) {
             switch ( json[ pos ] ) {
@@ -69,7 +69,7 @@ Loop:
          }
          return true;
       }
-      private static bool Skip ( StringBuilder buf, String json, int skipStart, int headEnd, String until ) {
+      private static bool Skip ( StringBuilder buf, String json, ref int pos, int skipStart, int headEnd, String until ) {
          if ( json.Length <= headEnd ) return false;
          int tailStart = json.IndexOf( until, headEnd );
          if ( tailStart < 0 ) return false;
