@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 
 namespace Sheepy.BattleTechMod.Turbine {
+   using System.Threading;
    using static Mod;
    using static System.Reflection.BindingFlags;
 
@@ -106,22 +107,37 @@ Loop:
             foreach ( VersionManifestEntry versionManifestEntry in battleTechResourceLocator.AllEntriesOfResource( type ) )
                manifestList.Add( counter++, versionManifestEntry );
 
-         HMACSHA256 hmacsha = new HMACSHA256( SecretKey );
          Dictionary<int,byte[]> hashSet = new Dictionary<int,byte[]>();
-         for ( int i = 0 ; i < counter ; i++ ) {
-            VersionManifestEntry versionManifestEntry = manifestList[ i ];
-            if ( ! versionManifestEntry.IsAssetBundled && ! versionManifestEntry.IsResourcesAsset && File.Exists( versionManifestEntry.FilePath ) ) {
-               try {
-                  using ( FileStream fileStream = new FileStream( versionManifestEntry.FilePath, FileMode.Open, FileAccess.Read ) ) {
-                     hashSet.Add( i, hmacsha.ComputeHash( fileStream ) );
+         int threadCount = 1, doneThread = 0;
+         for ( int i = 0 ; i < threadCount ; i++ ) {
+            new Thread( () => { 
+               HMACSHA256 hasher = new HMACSHA256( SecretKey );
+               for ( int j = 0 ; j < counter ; j++ ) {
+                  VersionManifestEntry versionManifestEntry = manifestList[ j ];
+                  if ( ! versionManifestEntry.IsAssetBundled && ! versionManifestEntry.IsResourcesAsset && File.Exists( versionManifestEntry.FilePath ) ) {
+                     try {
+                        using ( FileStream fileStream = new FileStream( versionManifestEntry.FilePath, FileMode.Open, FileAccess.Read ) ) {
+                           hashSet.Add( j, hasher.ComputeHash( fileStream ) );
+                        }
+                     } catch ( Exception ex ) {
+                        Error( "Could not calculate hash on {0}: {1}", versionManifestEntry.FilePath, ex );
+                     }
                   }
-               } catch ( Exception ex ) {
-                  Error( "Could not calculate hash on {0}: {1}", versionManifestEntry.FilePath, ex );
                }
-            }
+               lock( hashSet ) { 
+                  ++doneThread;
+                  if ( doneThread == threadCount )
+                     Monitor.Pulse( hashSet );
+               }
+            } ).Start();
          }
 
+         HMACSHA256 hmacsha = new HMACSHA256( SecretKey );
          List<byte[]> hashList = new List<byte[]>();
+         lock( hashSet ) { 
+            if ( doneThread != threadCount )
+               Monitor.Wait( hashSet );
+         }
          for ( int i = 0 ; i < counter ; i++ )
             hashList.Add( hashSet[i] );
          __result = Convert.ToBase64String( hmacsha.ComputeHash( hashList.SelectMany( ( byte[] x ) => x ).ToArray<byte>() ) );
