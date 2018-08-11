@@ -95,24 +95,36 @@ Loop:
       private static byte[] SecretKey;
 
       public static bool MultiThreadDataHash ( ref string __result, params BattleTechResourceType[] typesToHash ) { try {
-         SecretKey = (byte[]) typeof( DataManager ).GetField( "secret_key", NonPublic | Static ).GetValue( null );
-         HMACSHA256 hmacsha = new HMACSHA256( SecretKey );
+         if ( SecretKey == null ) {
+            SecretKey = (byte[]) typeof( DataManager ).GetField( "secret_key", NonPublic | Static ).GetValue( null );
+            if ( SecretKey == null ) throw new NullReferenceException( "DataManager.secret_key is null" );
+         }
          BattleTechResourceLocator battleTechResourceLocator = new BattleTechResourceLocator();
-         List<byte[]> list = new List<byte[]>();
-         foreach ( BattleTechResourceType type in typesToHash ) {
-            foreach ( VersionManifestEntry versionManifestEntry in battleTechResourceLocator.AllEntriesOfResource( type ) ) {
-               if ( !versionManifestEntry.IsAssetBundled && !versionManifestEntry.IsResourcesAsset && File.Exists( versionManifestEntry.FilePath ) ) {
-                  try {
-                     using ( FileStream fileStream = new FileStream( versionManifestEntry.FilePath, FileMode.Open, FileAccess.Read ) ) {
-                        list.Add( hmacsha.ComputeHash( fileStream ) );
-                     }
-                  } catch ( Exception ex ) {
-                     Error( "Could not calculate hash on {0}: {1}", versionManifestEntry.FilePath, ex );
+         int counter = 0;
+         Dictionary<int,VersionManifestEntry> manifestList = new Dictionary<int,VersionManifestEntry>( 4000 ); // Vanilla has 900+. Mods may adds a lot more.
+         foreach ( BattleTechResourceType type in typesToHash )
+            foreach ( VersionManifestEntry versionManifestEntry in battleTechResourceLocator.AllEntriesOfResource( type ) )
+               manifestList.Add( counter++, versionManifestEntry );
+
+         HMACSHA256 hmacsha = new HMACSHA256( SecretKey );
+         Dictionary<int,byte[]> hashSet = new Dictionary<int,byte[]>();
+         for ( int i = 0 ; i < counter ; i++ ) {
+            VersionManifestEntry versionManifestEntry = manifestList[ i ];
+            if ( ! versionManifestEntry.IsAssetBundled && ! versionManifestEntry.IsResourcesAsset && File.Exists( versionManifestEntry.FilePath ) ) {
+               try {
+                  using ( FileStream fileStream = new FileStream( versionManifestEntry.FilePath, FileMode.Open, FileAccess.Read ) ) {
+                     hashSet.Add( i, hmacsha.ComputeHash( fileStream ) );
                   }
+               } catch ( Exception ex ) {
+                  Error( "Could not calculate hash on {0}: {1}", versionManifestEntry.FilePath, ex );
                }
             }
          }
-         __result = Convert.ToBase64String( hmacsha.ComputeHash( list.SelectMany( ( byte[] x ) => x ).ToArray<byte>() ) );
+
+         List<byte[]> hashList = new List<byte[]>();
+         for ( int i = 0 ; i < counter ; i++ )
+            hashList.Add( hashSet[i] );
+         __result = Convert.ToBase64String( hmacsha.ComputeHash( hashList.SelectMany( ( byte[] x ) => x ).ToArray<byte>() ) );
          Verbo( "Hash = {0}", __result );
          return false;
       }                 catch ( Exception ex ) { return Error( ex ); } }
