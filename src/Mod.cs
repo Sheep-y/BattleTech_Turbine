@@ -9,6 +9,7 @@ using System.Reflection;
 namespace Sheepy.BattleTechMod.Turbine {
    using Sheepy.Logging;
    using System.IO;
+   using System.Text.RegularExpressions;
    using static System.Reflection.BindingFlags;
 
    public class Mod : BattleMod {
@@ -63,7 +64,8 @@ namespace Sheepy.BattleTechMod.Turbine {
             // Fix VFXNames.AllNames NPE
             Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
             // CombatGameConstants can be loaded and reloaded many times.  Cache it for reuse and fix an NPE.
-            Patch( typeof( CombatGameConstants ), "CreateFromSaved", Static, "Override_CombatGameConstants_CreateFromSaved", "Save_CombatGameConstants" );
+            Patch( typeof( CombatGameConstants ), "LoadFromManifest", NonPublic, "Override_CombatGameConstants_LoadFromManifest", null );
+            Patch( typeof( CombatGameConstants ), "OnDataLoaded", NonPublic, "Save_CombatGameConstants_Data", null );
          }
          // A pretty safe filter that disables invalid or immediately duplicating complete messages.
          if ( FilterNullAndRepeatedMessage )
@@ -161,29 +163,26 @@ namespace Sheepy.BattleTechMod.Turbine {
             lastMessage = key;
       }
 
-      // Cache GameConstants by GameInstance hash for reuse.
-      // I could have dug deeper to find why CombatGameConstants.LoadFromManifest does not populate MovementConstants.MoveTable,
-      // but I don't want to spend too much time on this mod which should be a temporary measure before game ver 1.2 lands.
-      private static Dictionary<WeakReference, WeakReference> ConstantCache = new Dictionary<WeakReference, WeakReference>();
-      private static bool ConstantCached = false;
+      
+      public static string CombatConstantJSON;
+      private static MethodInfo LoadMoraleResources, LoadMaintenanceResources;
 
-      public static bool Override_CombatGameConstants_CreateFromSaved ( ref CombatGameConstants __result, GameInstance game ) {
-         ConstantCached = false;
-         foreach ( var cache in ConstantCache.ToArray() ) {
-            if ( cache.Key.Target == null || cache.Value.Target == null )
-               ConstantCache.Remove( cache.Key );
-            else if ( cache.Key.Target == game ) {
-               ConstantCached = true;
-               __result = (CombatGameConstants) cache.Value.Target;
-               return false;
-            }
+      public static bool Override_CombatGameConstants_LoadFromManifest ( CombatGameConstants __instance ) { try {
+         if ( CombatConstantJSON == null ) return true;
+			__instance.FromJSON( CombatConstantJSON );
+         LoadMoraleResources?.Invoke( __instance, null );
+         LoadMaintenanceResources?.Invoke( __instance, null );
+         return false;
+      }                 catch ( Exception ex ) { return Error( ex ); } }
+
+      public static void Save_CombatGameConstants_Data ( MessageCenterMessage message ) {
+         if ( message is DataManagerRequestCompleteMessage<string> msg && msg.ResourceType == BattleTechResourceType.CombatGameConstants ) {
+            CombatConstantJSON = Regex.Replace( JsonPatch.StripComments( msg.Resource ), @"(?<=\n)\s+", "" );
+            TryRun( ModLog, () => {
+               LoadMoraleResources = typeof( CombatGameConstants ).GetMethod( "LoadMoraleResources", NonPublic | Instance );
+               LoadMaintenanceResources = typeof( CombatGameConstants ).GetMethod( "LoadMaintenanceResources", NonPublic | Instance );
+            } );
          }
-         return true;
-      }
-
-      public static void Save_CombatGameConstants ( CombatGameConstants __result, GameInstance game ) {
-         if ( ! ConstantCached )
-            ConstantCache.Add( new WeakReference( game ), new WeakReference( __result ) );
       }
 
       private static VFXNameDef[] nameCache;
