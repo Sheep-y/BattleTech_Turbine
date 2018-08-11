@@ -9,14 +9,28 @@ using System.Text;
 using System.Threading;
 
 namespace Sheepy.BattleTechMod.Turbine {
+   using System.Collections;
+   using System.Text.RegularExpressions;
    using static Mod;
    using static System.Reflection.BindingFlags;
 
    public class DataProcess : BattleModModule {
 
+      public static void LogStart() { Info( "Start" ); }
+      public static void LogEnd() { Info( "End" ); }
+
       public override void ModStarts () {
          Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", NonPublic | Static, "Override_StripComments", null );
          Patch( typeof( DataManager ), "GetDataHash", Static, "MultiThreadDataHash", null );
+         Patch( typeof( CSVReader ), "ReadRow", new Type[]{}, "Override_CSVReader_ReadRow", null );
+      }
+
+      public static string Unescape ( string value ) {
+         if ( value.StartsWith( "\"" ) && value.EndsWith( "\"" ) ) {
+            value = value.Substring( 1, value.Length - 2 );
+            if ( value.Contains( "\"\"" ) ) value = value.Replace( "\"\"", "\"" );
+         }
+         return value;
       }
 
       // ============ Json Process ============
@@ -104,7 +118,8 @@ Loop:
          }
 
          int manifestCounter = 0;
-         BattleTechResourceLocator battleTechResourceLocator = new BattleTechResourceLocator();
+         // For me, half the original time is spent on this new BattleTechResourceLocator, and most of that time is in CSVReader.ReadRow.
+         BattleTechResourceLocator battleTechResourceLocator = new BattleTechResourceLocator(); 
          Dictionary<int,VersionManifestEntry> manifestList = new Dictionary<int,VersionManifestEntry>( 4000 ); // Vanilla has 900+. Mods may adds a lot more.
          foreach ( BattleTechResourceType type in typesToHash )
             foreach ( VersionManifestEntry versionManifestEntry in battleTechResourceLocator.AllEntriesOfResource( type ) )
@@ -112,7 +127,7 @@ Loop:
 
          Dictionary<int,byte[]> hashSet = new Dictionary<int,byte[]>();
          int threadCount = Math.Max( 2, Math.Min( Environment.ProcessorCount*2, 32 ) ), doneThread = 0;
-         Info( "Calculating data hash with {0} threads", threadCount );
+         Info( "Calculating data hash with {0} threads.", threadCount );
          for ( int i = 0 ; i < threadCount ; i++ ) {
             new Thread( () => {
                HMACSHA256 hasher = new HMACSHA256( SecretKey );
@@ -157,5 +172,21 @@ Loop:
          Verbo( "Hash = {0}", __result );
          return false;
       }                 catch ( Exception ex ) { return Error( ex ); } }
+
+      // ============ CSVReader ============
+
+      // Compiled and shared regex
+      private static Regex regex = new Regex("((?<=\\\")[^\\\"]*(?=\\\"(,|$)+)|(?<=,|^)[^,\\\"]*(?=,|$))", RegexOptions.Multiline | RegexOptions.Compiled );
+
+      public static bool Override_CSVReader_ReadRow ( ref List<string> __result, ref int ___activeIdx, ref string[] ___rows ) {
+         if ( ___activeIdx < 0 || ___activeIdx >= ___rows.Length ) {
+            __result = null;
+            return false;
+         }
+         __result = new List<string>();
+         foreach ( object match in regex.Matches( ___rows[ ___activeIdx++ ] ) )
+            __result.Add( Unescape( match.ToString() ) );
+         return false;
+      }
    }
 }
