@@ -13,6 +13,12 @@ namespace Sheepy.BattleTechMod.Turbine {
 
    public class Mod : BattleMod {
 
+      // Block processing of empty and repeated DataManagerRequestCompleteMessages
+      private const bool FilterNullAndRepeatedMessage = true;
+
+      // Cache some game properties to work around NPE of unknown cause.
+      private const bool CacheCombatConstAndVFXNames = true;
+
       // A kill switch to press when any things go wrong during initialisation.
       private static bool UnpatchManager = true;
 
@@ -53,12 +59,15 @@ namespace Sheepy.BattleTechMod.Turbine {
          Logger.LogLevel = SourceLevels.Verbose;
 
          Verbo( "Some simple filters and safety shield first." );
-         // Fix VFXNames.AllNames NPE
-         Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
-         // CombatGameConstants can be loaded and reloaded many times.  Cache it for reuse and fix an NPE.
-         Patch( typeof( CombatGameConstants ), "CreateFromSaved", Static, "Override_CombatGameConstants_CreateFromSaved", "Save_CombatGameConstants" );
+         if ( CacheCombatConstAndVFXNames ) {
+            // Fix VFXNames.AllNames NPE
+            Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
+            // CombatGameConstants can be loaded and reloaded many times.  Cache it for reuse and fix an NPE.
+            Patch( typeof( CombatGameConstants ), "CreateFromSaved", Static, "Override_CombatGameConstants_CreateFromSaved", "Save_CombatGameConstants" );
+         }
          // A pretty safe filter that disables invalid or immediately duplicating complete messages.
-         Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, "Skip_DuplicateRequestCompleteMessage" );
+         if ( FilterNullAndRepeatedMessage )
+            Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, "Skip_DuplicateRequestCompleteMessage" );
 
          Verbo( "Ok let's try to install real Turbine." );
          dmType = typeof( DataManager );
@@ -155,23 +164,26 @@ namespace Sheepy.BattleTechMod.Turbine {
       // Cache GameConstants by GameInstance hash for reuse.
       // I could have dug deeper to find why CombatGameConstants.LoadFromManifest does not populate MovementConstants.MoveTable,
       // but I don't want to spend too much time on this mod which should be a temporary measure before game ver 1.2 lands.
-      public static Dictionary<int, WeakReference> ConstantCache = new Dictionary<int, WeakReference>();
+      private static Dictionary<WeakReference, WeakReference> ConstantCache = new Dictionary<WeakReference, WeakReference>();
+      private static bool ConstantCached = false;
 
       public static bool Override_CombatGameConstants_CreateFromSaved ( ref CombatGameConstants __result, GameInstance game ) {
-         int id = game.GetHashCode(); // Yeah, a slim chance to conflict, but does it really matter for CombatGameConstants?
-         if ( ! ConstantCache.TryGetValue( id, out WeakReference link ) || link.Target == null ) {
-            foreach ( int key in ConstantCache.Keys.ToArray() )
-               if ( ConstantCache[ key ].Target == null ) ConstantCache.Remove( key );
-            return true;
+         ConstantCached = false;
+         foreach ( var cache in ConstantCache.ToArray() ) {
+            if ( cache.Key.Target == null || cache.Value.Target == null )
+               ConstantCache.Remove( cache.Key );
+            else if ( cache.Key.Target == game ) {
+               ConstantCached = true;
+               __result = (CombatGameConstants) cache.Value.Target;
+               return false;
+            }
          }
-         __result = (CombatGameConstants) ConstantCache[ id ].Target;
-         return false;
+         return true;
       }
 
       public static void Save_CombatGameConstants ( CombatGameConstants __result, GameInstance game ) {
-         int id = game.GetHashCode(); // Alternative is either use game as key and keep it forever, or bring in a proper weak dictionary.
-         if ( ! ConstantCache.ContainsKey( id ) || ConstantCache[ id ].Target == null )
-            ConstantCache[ id ] = new WeakReference( __result );
+         if ( ! ConstantCached )
+            ConstantCache.Add( new WeakReference( game ), new WeakReference( __result ) );
       }
 
       private static VFXNameDef[] nameCache;
