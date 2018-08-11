@@ -1,4 +1,10 @@
+using BattleTech;
+using BattleTech.Data;
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Sheepy.BattleTechMod.Turbine {
@@ -9,6 +15,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       public override void ModStarts () {
          Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", NonPublic | Static, "Override_StripComments", null );
+         Patch( typeof( DataManager ), "GetDataHash", Static, "MultiThreadDataHash", null );
       }
 
       // ============ Json Process ============
@@ -82,5 +89,32 @@ Loop:
          if ( json.Length <= pos ) return '\u0000';
          return json[ pos ];
       }
+
+      // ============ Data Hash ============
+
+      private static byte[] SecretKey;
+
+      public static bool MultiThreadDataHash ( ref string __result, params BattleTechResourceType[] typesToHash ) { try {
+         SecretKey = (byte[]) typeof( DataManager ).GetField( "secret_key", NonPublic | Static ).GetValue( null );
+         HMACSHA256 hmacsha = new HMACSHA256( SecretKey );
+         BattleTechResourceLocator battleTechResourceLocator = new BattleTechResourceLocator();
+         List<byte[]> list = new List<byte[]>();
+         foreach ( BattleTechResourceType type in typesToHash ) {
+            foreach ( VersionManifestEntry versionManifestEntry in battleTechResourceLocator.AllEntriesOfResource( type ) ) {
+               if ( !versionManifestEntry.IsAssetBundled && !versionManifestEntry.IsResourcesAsset && File.Exists( versionManifestEntry.FilePath ) ) {
+                  try {
+                     using ( FileStream fileStream = new FileStream( versionManifestEntry.FilePath, FileMode.Open, FileAccess.Read ) ) {
+                        list.Add( hmacsha.ComputeHash( fileStream ) );
+                     }
+                  } catch ( Exception ex ) {
+                     Error( "Could not calculate hash on {0}: {1}", versionManifestEntry.FilePath, ex );
+                  }
+               }
+            }
+         }
+         __result = Convert.ToBase64String( hmacsha.ComputeHash( list.SelectMany( ( byte[] x ) => x ).ToArray<byte>() ) );
+         Verbo( "Hash = {0}", __result );
+         return false;
+      }                 catch ( Exception ex ) { return Error( ex ); } }
    }
 }
