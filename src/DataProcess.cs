@@ -108,7 +108,7 @@ Loop:
       // ============ Data Hash ============
 
       private static byte[] SecretKey;
-      private const int JobPerLoop = 16;
+      private const int JobPerLoop = 16, HashSize = 32;
 
       public static bool MultiThreadDataHash ( ref string __result, params BattleTechResourceType[] typesToHash ) { try {
          Verbo( "Prepare to get data hash." );
@@ -117,18 +117,33 @@ Loop:
             if ( SecretKey == null ) throw new NullReferenceException( "DataManager.secret_key is null" );
          }
 
-         int manifestCounter = 0;
-         // For me, half the original time is spent on this new BattleTechResourceLocator, and most of that time is in CSVReader.ReadRow.
+         int manifestCounter = 0, pos = 0;
+         // For me, over half the pre-Turbine time is spent on this new BattleTechResourceLocator.  Post-Turbine it consume most time!
          BattleTechResourceLocator battleTechResourceLocator = new BattleTechResourceLocator(); 
-         Dictionary<int,VersionManifestEntry> manifestList = new Dictionary<int,VersionManifestEntry>( 4000 ); // Vanilla has 900+. Mods may adds a lot more.
+         Dictionary<int,VersionManifestEntry> manifestMap = new Dictionary<int,VersionManifestEntry>( 4000 ); // Vanilla has 900+. Mods may adds a lot more.
          foreach ( BattleTechResourceType type in typesToHash )
             foreach ( VersionManifestEntry versionManifestEntry in battleTechResourceLocator.AllEntriesOfResource( type ) )
-               manifestList.Add( manifestCounter++, versionManifestEntry );
+               manifestMap.Add( manifestCounter++, versionManifestEntry );
+         battleTechResourceLocator = null;
 
-         Dictionary<int,byte[]> hashSet = new Dictionary<int,byte[]>();
-         int threadCount = Math.Max( 2, Math.Min( Environment.ProcessorCount*2, 32 ) ), doneThread = 0;
-         Info( "Calculating data hash with {0} threads.", threadCount );
-         for ( int i = 0 ; i < threadCount ; i++ ) {
+         Dictionary<int,byte[]> hashMap = new Dictionary<int,byte[]>();
+         RunHashs( manifestMap, hashMap );
+
+         byte[] allHash = new byte[ HashSize * hashMap.Count ];
+         for ( int i = 0 ; i < manifestCounter ; i++ ) {
+            if ( ! hashMap.TryGetValue( i, out byte[] hash ) ) continue;
+            Buffer.BlockCopy( hash, 0, allHash, pos, HashSize );
+            pos += HashSize;
+         }
+         __result = Convert.ToBase64String( new HMACSHA256( SecretKey ).ComputeHash( allHash ) );
+         Verbo( "Hash = {0}", __result );
+         return false;
+      }                 catch ( Exception ex ) { return Error( ex ); } }
+
+      private static void RunHashs ( Dictionary<int,VersionManifestEntry> manifestList, Dictionary<int,byte[]> hashSet ) {
+         int workingThread = Math.Max( 2, Math.Min( Environment.ProcessorCount*2, 32 ) );
+         Info( "Calculating data hash with {0} threads.", workingThread );
+         for ( int i = 0 ; i < workingThread ; i++ ) {
             new Thread( () => {
                HMACSHA256 hasher = new HMACSHA256( SecretKey );
                Dictionary<int,VersionManifestEntry> taskList = new Dictionary<int, VersionManifestEntry>( JobPerLoop );
@@ -153,25 +168,16 @@ Loop:
                } while ( true );
                lock( hashSet ) { 
                   foreach ( var result in resultList ) hashSet.Add( result.Key, result.Value );
-                  ++doneThread;
-                  if ( doneThread == threadCount )
+                  if ( --workingThread <= 0 )
                      Monitor.Pulse( hashSet );
                }
             } ).Start();
          }
-
-         battleTechResourceLocator = null;
-         HMACSHA256 hmacsha = new HMACSHA256( SecretKey );
-         List<byte[]> hashList = new List<byte[]>();
          lock( hashSet ) {
-            if ( doneThread != threadCount )
+            if ( workingThread > 0 )
                Monitor.Wait( hashSet );
          }
-         for ( int i = 0 ; i < manifestCounter ; i++ ) hashList.Add( hashSet[i] );
-         __result = Convert.ToBase64String( hmacsha.ComputeHash( hashList.SelectMany( ( byte[] x ) => x ).ToArray<byte>() ) );
-         Verbo( "Hash = {0}", __result );
-         return false;
-      }                 catch ( Exception ex ) { return Error( ex ); } }
+      }
 
       // ============ CSVReader ============
 
