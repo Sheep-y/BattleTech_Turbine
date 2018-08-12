@@ -33,7 +33,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( MultiThreadHash )
             Patch( typeof( DataManager ), "GetDataHash", Static, "MultiThreadDataHash", null );
          if ( OptimiseReadRowRegex ) {
-            csvField = new Regex("((?<=\\\")[^\\\"]*(?=\\\"(,|$)+)|(?<=,|^)[^,\\\"]*(?=,|$))", RegexOptions.Multiline | RegexOptions.Compiled );
+            csvField = new Regex( "((?<=\\\")(?>[^\\\"]*)(?=\\\"(,|$)+)|(?<=,|^)(?>[^,\\\"]*)(?=,|$))", RegexOptions.Multiline | RegexOptions.Compiled );
             Patch( typeof( CSVReader ), "ReadRow", new Type[]{}, "Override_CSVReader_ReadRow", null );
          }
       }
