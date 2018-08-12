@@ -48,10 +48,17 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       // ============ Json Process ============
 
+      private static bool commentDetected;
+
       public static bool Override_StripComments ( ref String __result, String json ) { try {
+         commentDetected = false;
          __result = StripComments( json );
+         if ( commentDetected ) // Try parse stripped result to make sure it is good
+            fastJSON.JSON.Parse( __result );
          return false;
-      }                 catch ( Exception ex ) { return Error( ex ); } }
+      }  catch ( Exception ex ) {
+         return Error( ex );
+      } }
 
       public static String StripComments ( String json ) {
          int pos = 0;
@@ -111,6 +118,7 @@ Loop:
          if ( skipStart > 0 )
             buf.Append( json.Substring( pos, skipStart - pos ) );
          pos = tailStart + until.Length;
+         commentDetected = true;
          return true;
       }
       private static char Peek ( String json, int pos ) {
