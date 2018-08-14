@@ -57,15 +57,12 @@ namespace Sheepy.BattleTechMod.Turbine {
 
          Verbo( "Ok let's try to install real Turbine." );
          dmType = typeof( DataManager );
-         backgroundRequestsCurrentAllowedWeight = dmType.GetField( "backgroundRequestsCurrentAllowedWeight", NonPublic | Instance );
-         foregroundRequestsCurrentAllowedWeight = dmType.GetField( "foregroundRequestsCurrentAllowedWeight", NonPublic | Instance );
          prewarmRequests = dmType.GetField( "prewarmRequests", NonPublic | Instance );
          isLoading = dmType.GetField( "isLoading", NonPublic | Instance );
          isLoadingAsync = dmType.GetField( "isLoadingAsync", NonPublic | Instance );
          CreateByResourceType = dmType.GetMethod( "CreateByResourceType", NonPublic | Instance );
          SaveCache = dmType.GetMethod( "SaveCache", NonPublic | Instance );
-         if ( backgroundRequestsCurrentAllowedWeight == null || foregroundRequestsCurrentAllowedWeight == null || prewarmRequests == null ||
-              isLoading == null || isLoadingAsync == null || CreateByResourceType == null || SaveCache == null )
+         if ( prewarmRequests == null || isLoading == null || isLoadingAsync == null || CreateByResourceType == null || SaveCache == null )
             throw new NullReferenceException( "One or more DataManager fields not found with reflection." );
          logger = HBS.Logging.Logger.GetLogger( "Data.DataManager" );
          stopwatch = new Stopwatch();
@@ -124,7 +121,6 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static DataManager manager;
       private static MessageCenter center;
       private static HBS.Logging.ILog logger;
-      private static FieldInfo backgroundRequestsCurrentAllowedWeight, foregroundRequestsCurrentAllowedWeight;
       private static FieldInfo prewarmRequests, isLoading, isLoadingAsync;
       private static MethodInfo CreateByResourceType, SaveCache;
 
@@ -294,12 +290,12 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
       }
 
-      public static bool Override_ProcessRequests ( DataManager __instance ) { try {
+      public static bool Override_ProcessRequests ( DataManager __instance, uint ___foregroundRequestsCurrentAllowedWeight ) { try {
          if ( UnpatchManager ) return true;
          if ( queue.Count <= 0 ) return false; // Early abort before reflection
          DataManager me = __instance;
          int lightLoad = 0, heavyLoad = 0;
-         uint currentAllowedWeight = (uint) foregroundRequestsCurrentAllowedWeight.GetValue( me );
+         uint currentAllowedWeight = ___foregroundRequestsCurrentAllowedWeight;
          if ( DebugLog ) Trace( "Processing {0} foreground requests", queue.Count );
          foreach ( DataManager.DataManagerLoadRequest request in queue.ToArray() ) {
             if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
@@ -352,11 +348,11 @@ namespace Sheepy.BattleTechMod.Turbine {
          return false;
       }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
 
-      public static bool Override_ProcessAsyncRequests ( DataManager __instance ) {
+      public static bool Override_ProcessAsyncRequests ( DataManager __instance, uint ___backgroundRequestsCurrentAllowedWeight ) {
          if ( UnpatchManager ) return true;
          if ( background.Count < 0 ) return false; // Early abort before reflection
          DataManager me = __instance;
-         uint currentAllowedWeight = (uint) backgroundRequestsCurrentAllowedWeight.GetValue( me );
+         uint currentAllowedWeight = ___backgroundRequestsCurrentAllowedWeight;
          if ( DebugLog ) Trace( "Processing {0} background requests", background.Count );
          foreach ( DataManager.DataManagerLoadRequest request in background.Values ) {
             request.RequestWeight.SetAllowedWeight( currentAllowedWeight );
@@ -396,14 +392,14 @@ namespace Sheepy.BattleTechMod.Turbine {
          return false;
       }
 
-      public static bool Override_RequestResourceAsync_Internal ( DataManager __instance, BattleTechResourceType resourceType, string identifier, PrewarmRequest prewarm ) { try {
+      public static bool Override_RequestResourceAsync_Internal ( DataManager __instance, BattleTechResourceType resourceType, string identifier, PrewarmRequest prewarm, uint ___backgroundRequestsCurrentAllowedWeight ) { try {
          if ( UnpatchManager || string.IsNullOrEmpty( identifier ) ) return false;
          DataManager me = __instance;
          string key = GetKey( resourceType, identifier );
          background.TryGetValue( key, out DataManager.DataManagerLoadRequest dataManagerLoadRequest );
          if ( dataManagerLoadRequest != null ) {
             if ( dataManagerLoadRequest.State == DataManager.DataManagerLoadRequest.RequestState.Complete ) {
-               if ( !dataManagerLoadRequest.DependenciesLoaded( (uint) backgroundRequestsCurrentAllowedWeight.GetValue( me ) ) ) {
+               if ( !dataManagerLoadRequest.DependenciesLoaded( ___backgroundRequestsCurrentAllowedWeight ) ) {
                   dataManagerLoadRequest.ResetRequestState();
                } else {
                   dataManagerLoadRequest.NotifyLoadComplete();
@@ -477,11 +473,11 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
       }
 
-      public static bool Override_SetLoadRequestWeights ( DataManager __instance, uint foregroundRequestWeight, uint backgroundRequestWeight ) { try {
+      public static bool Override_SetLoadRequestWeights ( DataManager __instance, uint foregroundRequestWeight, uint backgroundRequestWeight, ref uint ___foregroundRequestsCurrentAllowedWeight, ref uint ___backgroundRequestsCurrentAllowedWeight ) { try {
          if ( UnpatchManager ) return true;
          if ( DebugLog ) Info( "Set LoadRequestWeights {0}/{1} on {2}/{3} loading foreground/background requests.", foregroundRequestWeight, backgroundRequestWeight, foregroundLoading.Count, background.Count );
-         foregroundRequestsCurrentAllowedWeight.SetValue( __instance, foregroundRequestWeight );
-         backgroundRequestsCurrentAllowedWeight.SetValue( __instance, backgroundRequestWeight );
+         ___foregroundRequestsCurrentAllowedWeight = foregroundRequestWeight;
+         ___backgroundRequestsCurrentAllowedWeight = backgroundRequestWeight;
          foreach ( DataManager.DataManagerLoadRequest dataManagerLoadRequest in queue )
             if ( foregroundRequestWeight > dataManagerLoadRequest.RequestWeight.AllowedWeight )
                dataManagerLoadRequest.RequestWeight.SetAllowedWeight( foregroundRequestWeight );

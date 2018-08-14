@@ -131,12 +131,10 @@ Loop:
       private static byte[] SecretKey;
       private const int JobPerLoop = 16, HashSize = 32;
 
-      public static bool MultiThreadDataHash ( ref string __result, params BattleTechResourceType[] typesToHash ) { try {
+      public static bool MultiThreadDataHash ( ref string __result, byte[] ___secret_key, params BattleTechResourceType[] typesToHash ) { try {
          if ( DebugLog ) Verbo( "Prepare to get data hash." );
-         if ( SecretKey == null ) {
-            SecretKey = (byte[]) typeof( DataManager ).GetField( "secret_key", NonPublic | Static ).GetValue( null );
-            if ( SecretKey == null ) throw new NullReferenceException( "DataManager.secret_key is null" );
-         }
+         SecretKey = ___secret_key;
+         if ( SecretKey == null ) throw new NullReferenceException( "DataManager.secret_key is null" );
 
          int manifestCounter = 0, pos = 0;
          // For me, over half the pre-Turbine time is spent on this new BattleTechResourceLocator.  Post-Turbine it consume most time!
