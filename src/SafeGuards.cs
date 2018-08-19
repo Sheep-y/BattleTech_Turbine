@@ -21,6 +21,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       private const bool CacheCombatConst = true;
 
       public override void ModStarts () {
+         Verbo( "Some simple filters and safety shield first." );
          // A pretty safe filter that disables invalid or immediately duplicating complete messages.
          if ( FilterNullAndRepeatedMessage )
             Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, "Skip_DuplicateRequestCompleteMessage" );

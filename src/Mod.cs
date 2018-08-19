@@ -14,6 +14,7 @@ namespace Sheepy.BattleTechMod.Turbine {
    public class Mod : BattleMod {
 
       // A kill switch to press when any things go wrong during initialisation.
+      // Default true and set to false after initial patch success.  Also set to true after any exception.
       private static bool UnpatchManager = true;
 
       // Maintain a separate loading queue from task queue.
@@ -25,9 +26,6 @@ namespace Sheepy.BattleTechMod.Turbine {
       // Hack MechDef/MechComponentDef dependency checking?
       private const bool OverrideMechDefDependencyCheck = true;
       private const bool OverrideMechCompDependencyCheck = false;
-
-      // Override JSONSerializationUtility.StripHBSCommentsFromJSON?
-      private const bool OverrideStripCommentsFromJSON = true;
 
       // Performance hit varies by machine spec.
       internal const bool DebugLog = false;
@@ -46,13 +44,12 @@ namespace Sheepy.BattleTechMod.Turbine {
 
 #pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
       public override void ModStarts () {
-         Info( "ALoading queue {0}.", LoadingQueue  ? "on" : "off" );
+         Info( "Loading queue {0}.", LoadingQueue  ? "on" : "off" );
          Info( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
          Info( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
          Info( "OverrideMechCompDependencyCheck {0}.", OverrideMechCompDependencyCheck  ? "on" : "off" );
          Logger.LogLevel = SourceLevels.Verbose;
-
-         Verbo( "Some simple filters and safety shield first." );
+         stopwatch = new Stopwatch();
          Add( new SafeGuards() );
 
          Verbo( "Ok let's try to install real Turbine." );
@@ -64,7 +61,6 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( prewarmRequests == null || isLoadingAsync == null || CreateByResourceType == null || SaveCache == null )
             throw new NullReferenceException( "One or more DataManager fields not found with reflection." );
          logger = HBS.Logging.Logger.GetLogger( "Data.DataManager" );
-         stopwatch = new Stopwatch();
          Patch( dmType.GetConstructors()[0], "DataManager_ctor", null );
          Patch( dmType, "Clear", "Override_Clear", null );
          Patch( dmType, "CheckAsyncRequestsComplete", NonPublic, "Override_CheckRequestsComplete", null );
@@ -97,8 +93,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          UnpatchManager = false;
          Info( "Turbine initialised" );
 
-         if ( OverrideStripCommentsFromJSON )
-            Add( new DataProcess() );
+         Add( new DataProcess() );
 
          if ( DebugLog ) Logger.LogLevel = SourceLevels.Verbose | SourceLevels.ActivityTracing;
       }
