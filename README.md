@@ -17,7 +17,7 @@ This mod does not fix memory leaks, either.  Rest your eyes.
 
 # Installation
 
-1. Install [BTML](https://github.com/janxious/BattleTechModLoader).  It is new version by jo/janiux; the original by [Mpstark](https://github.com/Mpstark/ModTek/wiki/The-Drop-Dead-Simple-Guide-to-Installing-BTML-&-ModTek-&-ModTek-mods) also works.
+1. Install [BTML](https://github.com/janxious/ModTek/wiki/The-Drop-Dead-Simple-Guide-to-Installing-BTML-&-ModTek-&-ModTek-mods).  ModTek is optional if you don't use other mods.
 2. [Download this mod](https://github.com/Sheep-y/BattleTech_Turbine/releases), extract in the mod folder. i.e. You should see `BATTLETECH\Mods\Turbine.dll`.
 3. Launch and play as normal.  This mod has no settings.
 4. If the game crash or hang up during a loading screen or blank screen, delete the mod and try again.

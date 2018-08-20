@@ -4,10 +4,12 @@ using Harmony;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
+using Sheepy.Logging;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -29,12 +31,12 @@ namespace Sheepy.BattleTechMod {
          ReadBasicModInfo();
       }
 
-      public void Start () { Logger log = Logger; Start( ref log ); }
+      public void Start () { Logger log = Log; Start( ref log ); }
       public void Start ( ref Logger log ) {
          CurrentMod = this;
          TryRun( Setup ); // May be overloaded
-         if ( log != Logger ) 
-            log = Logger;
+         if ( log != Log ) 
+            log = Log;
          Add( this );
          PatchBattleMods();
          CurrentMod = null;
@@ -46,10 +48,10 @@ namespace Sheepy.BattleTechMod {
          get { return _LogDir; }
          protected set {
             _LogDir = value;
-            Logger = new Logger( GetLogFile() );
+            Log = new Logger( GetLogFile() );
          }
       }
-      public HarmonyInstance harmony { get; internal set; }
+      public HarmonyInstance ModHarmony { get; internal set; }
 
       // ============ Setup ============
 
@@ -66,13 +68,13 @@ namespace Sheepy.BattleTechMod {
 #pragma warning restore CS0649
 
       // Fill in blanks with Assembly values, then read from mod.json
-      private void ReadBasicModInfo () { TryRun( Logger, () => {
+      private void ReadBasicModInfo () { TryRun( Log, () => {
          Assembly file = GetType().Assembly;
          Id = GetType().Namespace;
          Name = file.GetName().Name;
          BaseDir = Path.GetDirectoryName( file.Location ) + "/"; 
          string mod_info_file = BaseDir + "mod.json";
-         if ( File.Exists( mod_info_file ) ) TryRun( Logger, () => {
+         if ( File.Exists( mod_info_file ) ) TryRun( Log, () => {
             ModInfo info = JsonConvert.DeserializeObject<ModInfo>( File.ReadAllText( mod_info_file ) );
             if ( ! string.IsNullOrEmpty( info.Name ) )
                Name = info.Name;
@@ -84,9 +86,9 @@ namespace Sheepy.BattleTechMod {
 
       // Override this method to override Namd, Id, or Logger. Remember to call this base method!
       protected virtual void Setup () {
-         Logger.Delete();
-         Logger.Info( "{0:yyyy-MM-dd} Loading {1} Version {2} @ {3}", DateTime.Now, Name, Version, BaseDir );
-         Logger.Info( "Game Version {0}, Harmony Version {1}" + Environment.NewLine, VersionInfo.ProductVersion, typeof(HarmonyInstance).Assembly.GetName().Version );
+         Log.Delete();
+         Log.Info( "{0:yyyy-MM-dd} Loading {1} Version {2} @ {3}", DateTime.Now, Name, Version, BaseDir );
+         Log.Info( "Game Version {0}, Harmony Version {1}" + Environment.NewLine, VersionInfo.ProductVersion, typeof(HarmonyInstance).Assembly.GetName().Version );
       }
 
       public static string Idify ( string text ) { return Join( string.Empty, new Regex( "\\W+" ).Split( text ), UppercaseFirst ); }
@@ -96,12 +98,12 @@ namespace Sheepy.BattleTechMod {
       }
 
       // Load settings from settings.json, call SanitizeSettings, and create/overwrite it if the content is different.
-      protected virtual void LoadSettings <Settings> ( ref Settings settings, Func<Settings,Settings> sanitise = null ) {
-         string file = BaseDir + "settings.json", fileText = String.Empty;
+      protected virtual void LoadSettings <Settings> ( ref Settings settings, Action<Settings> sanitise = null ) {
+         string file = BaseDir + "settings.json", fileText = string.Empty;
          Settings config = settings;
          if ( File.Exists( file ) ) TryRun( () => {
             fileText = File.ReadAllText( file );
-            if ( fileText.Contains( "\"Name\"" ) && fileText.Contains( "\"DLL\"" ) && fileText.Contains( "\"Settings\"" ) ) TryRun( Logger, () => {
+            if ( fileText.Contains( "\"Name\"" ) && fileText.Contains( "\"DLL\"" ) && fileText.Contains( "\"Settings\"" ) ) TryRun( Log, () => {
                JObject modInfo = JObject.Parse( fileText );
                if ( modInfo.TryGetValue( "Settings", out JToken embedded ) )
                   fileText = embedded.ToString( Formatting.None );
@@ -109,16 +111,21 @@ namespace Sheepy.BattleTechMod {
             config = JsonConvert.DeserializeObject<Settings>( fileText );
          } );
          if ( sanitise != null )
-            TryRun( () => config = sanitise( config ) );
-         string sanitised = JsonConvert.SerializeObject( config, Formatting.Indented, new JsonSerializerSettings { ContractResolver = new BattleJsonContract() } );
-         Logger.Info( "WARNING: Do NOT change settings here. This is just a log." );
-         Logger.Info( "Loaded Settings: " + sanitised );
-         Logger.Info( "WARNING: Do NOT change settings here. This is just a log." ); // Yes. It is intentionally repeated.
-         string commented = BattleJsonContract.FormatSettingJsonText( settings.GetType(), sanitised );
-         if ( commented != fileText ) { // Can be triggered by comment or field updates, not necessary sanitisation.
-            Logger.Info( "Updating " + file );
-            SaveSettings( commented );
-         }
+            TryRun( () => sanitise( config ) );
+
+         ThreadPool.QueueUserWorkItem( ( obj ) => {
+            string sanitised;
+            sanitised = JsonConvert.SerializeObject( obj, Formatting.Indented, new JsonSerializerSettings { ContractResolver = new BattleJsonContract() } );
+            sanitised = Regex.Replace( sanitised, @"(?<=\d\.\d+)0+(?=,\r?\n)", "" );
+            Log.Info( "WARNING: Do NOT change settings here. This is just a log." );
+            Log.Info( "Loaded Settings: " + sanitised );
+            Log.Info( "WARNING: Do NOT change settings here. This is just a log." ); // Yes. It is intentionally repeated.
+            string commented = BattleJsonContract.FormatSettingJsonText( obj.GetType(), sanitised );
+            if ( commented != fileText ) { // Can be triggered by comment or field updates, not necessary sanitisation.
+               Log.Info( "Background: Updating " + file );
+               SaveSettings( commented );
+            }
+         }, typeof( object ).GetMethod( "MemberwiseClone", NonPublic | Instance ).Invoke( config, null ) );
          settings = config;
       }
 
@@ -127,7 +134,7 @@ namespace Sheepy.BattleTechMod {
       }
 
       private void SaveSettings ( string settings ) {
-         TryRun( Logger, () => File.WriteAllText( BaseDir + "settings.json", settings ) );
+         TryRun( Log, () => File.WriteAllText( BaseDir + "settings.json", settings ) );
       }
 
       // ============ Execution ============
@@ -141,7 +148,7 @@ namespace Sheepy.BattleTechMod {
             if ( module != this )
                if ( module.Id == Id ) module.Id += "." + Idify( module.Name );
             list.Add( module );
-            TryRun( Logger, module.ModStarts );
+            TryRun( Log, module.ModStarts );
          }
          return this;
       }
@@ -153,6 +160,7 @@ namespace Sheepy.BattleTechMod {
          Patch( typeof( UnityGameInstance ).GetMethod( "InitUserSettings", Instance | NonPublic ), null, typeof( BattleMod ).GetMethod( "RunGameStarts", Static | NonPublic ) );
          Patch( typeof( SimGameState ).GetMethod( "Init" ), null, typeof( BattleMod ).GetMethod( "RunCampaignStarts", Static | NonPublic ) );
          Patch( typeof( CombatHUD ).GetMethod( "Init", new Type[]{ typeof( CombatGameState ) } ), null, typeof( BattleMod ).GetMethod( "RunCombatStarts", Static | NonPublic ) );
+         Patch( typeof( CombatHUD ).GetMethod( "OnCombatGameDestroyed", new Type[]{} ), null, typeof( BattleMod ).GetMethod( "RunCombatEnds", Static | NonPublic ) );
          GameStartPatched = true;
       }
 
@@ -188,13 +196,17 @@ namespace Sheepy.BattleTechMod {
          }
          CallAllModules( module => module.CombatStarts() );
       }
-      
+
+      private static void RunCombatEnds ( CombatHUD __instance ) {
+         CallAllModules( module => module.CombatEnds() );
+      }
+
       private static void CallAllModules ( Action<BattleModModule> task ) {
          foreach ( var mod in modules ) {
             foreach ( BattleModModule module in mod.Value ) try {
                task( module );
             } catch ( Exception ex ) { 
-               mod.Key.Logger.Error( ex ); 
+               mod.Key.Log.Error( ex ); 
             }
          }
       }
@@ -248,6 +260,7 @@ namespace Sheepy.BattleTechMod {
       public virtual void CampaignStarts () {}
       public virtual void CombatStartsOnce () {}
       public virtual void CombatStarts () {}
+      public virtual void CombatEnds () {}
 
       protected BattleMod Mod { get; private set; }
 
@@ -261,7 +274,7 @@ namespace Sheepy.BattleTechMod {
             if ( Mod == null )
                throw new ApplicationException( "Mod module should be created in BattleMod.ModStart()." );
             Id = Mod.Id;
-            Logger = Mod.Logger;
+            Log = Mod.Log;
          }
       }
 
@@ -269,7 +282,7 @@ namespace Sheepy.BattleTechMod {
       public string Name { get; protected internal set; } = "Module";
       
       private Logger _Logger;
-      protected Logger Logger {
+      protected Logger Log {
          get { return _Logger ?? BattleMod.BTML_LOG; }
          set { _Logger = value; }
       }
@@ -281,7 +294,7 @@ namespace Sheepy.BattleTechMod {
          if ( method == null ) return null;
          MethodInfo mi = GetType().GetMethod( method, Static | Public | NonPublic );
          if ( mi == null ) {
-            Logger.Error( "Cannot find patch method " + method );
+            Log.Error( "Cannot find patch method " + method );
             return null;
          }
          return new HarmonyMethod( mi );
@@ -319,7 +332,7 @@ namespace Sheepy.BattleTechMod {
                patched = patchedClass.GetMethod( patchedMethod, flags, null, parameterTypes, null );
          } catch ( Exception e ) { ex = e; }
          if ( patched == null ) {
-            Logger.Error( "Cannot find {0}.{1}(...) to patch {2}", patchedClass.Name, patchedMethod, ex );
+            Log.Error( "Cannot find {0}.{1}(...) to patch {2}", patchedClass.Name, patchedMethod, ex );
             return;
          }
          Patch( patched, prefix, postfix );
@@ -338,15 +351,15 @@ namespace Sheepy.BattleTechMod {
       protected void Patch ( MethodBase patched, HarmonyMethod prefix, HarmonyMethod postfix ) {
          string pre = prefix?.method?.Name, post = postfix?.method?.Name;
          if ( patched == null ) {
-            Logger.Error( "Method not found. Cannot patch [ {0} : {1} ]", pre, post );
+            Log.Error( "Method not found. Cannot patch [ {0} : {1} ]", pre, post );
             return;
          }
-         if ( Mod.harmony == null ) {
-            Mod.harmony = HarmonyInstance.Create( Id );
-            Logger.Info( "Harmony instance \"{0}\"", Id );
+         if ( Mod.ModHarmony == null ) {
+            Mod.ModHarmony = HarmonyInstance.Create( Id );
+            Log.Info( "Harmony instance \"{0}\"", Id );
          }
-         Mod.harmony.Patch( patched, prefix, postfix );
-         Logger.Verbo( "Patched: {0} {1} [ {2} : {3} ]", patched.DeclaringType, patched, pre, post );
+         Mod.ModHarmony.Patch( patched, prefix, postfix );
+         Log.Verbo( "Patched: {0} {1} [ {2} : {3} ]", patched.DeclaringType, patched, pre, post );
       }
 
       // ============ UTILS ============
@@ -365,12 +378,12 @@ namespace Sheepy.BattleTechMod {
             .ToString();
       }
 
-      public static string Join<T> ( string separator, T[] array, Func<T,string> formatter = null ) {
-         if ( array == null ) return string.Empty;
+      public static string Join<T> ( string separator, IEnumerable<T> list, Func<T,string> formatter = null ) {
+         if ( list == null ) return string.Empty;
          StringBuilder result = new StringBuilder();
-         for ( int i = 0, len = array.Length ; i < len ; i++ ) {
-            if ( i > 0 ) result.Append( separator );
-            result.Append( formatter == null ? array[i]?.ToString() : formatter( array[i] ) );
+         foreach ( T e in list ) {
+            if ( result.Length > 0 ) result.Append( separator );
+            result.Append( formatter == null ? e?.ToString() : formatter( e ) );
          }
          return result.ToString();
       }
@@ -409,27 +422,27 @@ namespace Sheepy.BattleTechMod {
       }
 
       public static int RangeCheck ( string name, ref int val, int min, int max ) {
-         float v = val;
+         decimal v = val;
          RangeCheck( name, ref v, min, min, max, max );
-         return val = Mathf.RoundToInt( v );
+         return val = (int) Math.Round( v );
       }
 
-      public static float RangeCheck ( string name, ref float val, float min, float max ) {
+      public static decimal RangeCheck ( string name, ref decimal val, decimal min, decimal max ) {
          return RangeCheck( name, ref val, min, min, max, max );
       }
 
-      public static float RangeCheck ( string name, ref float val, float shownMin, float realMin, float realMax, float shownMax ) {
+      public static decimal RangeCheck ( string name, ref decimal val, decimal shownMin, decimal realMin, decimal realMax, decimal shownMax ) {
          if ( realMin > realMax || shownMin > shownMax )
             BattleMod.BTML_LOG.Error( "Incorrect range check params on " + name );
-         float orig = val;
+         decimal orig = val;
          if ( val < realMin )
             val = realMin;
          else if ( val > realMax )
             val = realMax;
          if ( orig < shownMin && orig > shownMax ) {
             string message = "Warning: " + name + " must be ";
-            if ( shownMin > float.MinValue )
-               if ( shownMax < float.MaxValue )
+            if ( shownMin > decimal.MinValue )
+               if ( shownMax < decimal.MaxValue )
                   message += " between " + shownMin + " and " + shownMax;
                else
                   message += " >= " + shownMin;
@@ -448,13 +461,13 @@ namespace Sheepy.BattleTechMod {
    [ AttributeUsage( AttributeTargets.Field | AttributeTargets.Property, Inherited = true, AllowMultiple = false ) ]
    public class JsonSection : Attribute {
       public string Section;
-      public JsonSection ( string section ) { Section = section ?? String.Empty; }
+      public JsonSection ( string section ) { Section = section ?? string.Empty; }
    }
 
    [ AttributeUsage( AttributeTargets.Field | AttributeTargets.Property, Inherited = true, AllowMultiple = false ) ]
    public class JsonComment : Attribute {
       public string[] Comments;
-      public JsonComment ( string comment ) { Comments = comment?.Split( '\n' ) ?? new string[]{ String.Empty }; }
+      public JsonComment ( string comment ) { Comments = comment?.Split( '\n' ) ?? new string[]{ string.Empty }; }
       public JsonComment ( string[] comments ) { Comments = comments ?? new string[]{}; }
    }
 
