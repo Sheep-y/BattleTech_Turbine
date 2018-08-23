@@ -1,5 +1,6 @@
 using BattleTech;
 using BattleTech.Data;
+using Harmony;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -38,6 +39,15 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
       }
 
+      public override void GameStarts () {
+         // Patch with authorization - https://github.com/Sheep-y/BattleTech_Turbine/issues/8
+         if ( BattleMod.FoundMod( "BattletechPerformanceFix.Control" ) ) {
+            Type DontStripComments = AppDomain.CurrentDomain.GetAssemblies().Select( e => e.GetType( "BattletechPerformanceFix.DontStripComments" ) ).FirstOrDefault( e => e != null );
+            if ( DontStripComments != null )
+               Patch( DontStripComments, "HBSStripCommentsMirror", Static, "Override_StripComments", null );
+         }
+      }
+
       public static string Unescape ( string value ) {
          if ( value.StartsWith( "\"" ) && value.EndsWith( "\"" ) ) {
             value = value.Substring( 1, value.Length - 2 );
@@ -50,6 +60,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static bool commentDetected;
 
+      [ HarmonyPriority( Priority.LowerThanNormal ) ]
       public static bool Override_StripComments ( ref string __result, string json ) { try {
          commentDetected = false;
          __result = StripComments( json );
