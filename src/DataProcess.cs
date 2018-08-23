@@ -50,7 +50,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static bool commentDetected;
 
-      public static bool Override_StripComments ( ref String __result, String json ) { try {
+      public static bool Override_StripComments ( ref string __result, string json ) { try {
          commentDetected = false;
          __result = StripComments( json );
          if ( commentDetected ) // Try parse stripped result to make sure it is good
@@ -60,7 +60,8 @@ namespace Sheepy.BattleTechMod.Turbine {
          return Error( ex );
       } }
 
-      public static String StripComments ( String json ) {
+      public static string StripComments ( string json ) {
+         if ( json == null ) return null;
          int pos = 0;
          StringBuilder buf = new StringBuilder( json.Length );
          do {
@@ -92,12 +93,12 @@ Loop:
          return buf.ToString();
       }
 
-      private static bool Match ( String json, int pos, String txt ) {
+      private static bool Match ( string json, int pos, String txt ) {
          if ( json.Length <= pos + txt.Length ) return false;
-         String sub = json.Substring( pos, txt.Length );
+         string sub = json.Substring( pos, txt.Length );
          return sub == txt;
       }
-      private static bool SkipWS ( StringBuilder buf, String json, ref int pos, int skipStart, int headEnd, String until ) {
+      private static bool SkipWS ( StringBuilder buf, string json, ref int pos, int skipStart, int headEnd, string until ) {
          if ( ! Skip( buf, json, ref pos, skipStart, headEnd, until ) ) return false;
          int len = json.Length;
          while ( pos < len ) {
@@ -111,7 +112,7 @@ Loop:
          }
          return true;
       }
-      private static bool Skip ( StringBuilder buf, String json, ref int pos, int skipStart, int headEnd, String until ) {
+      private static bool Skip ( StringBuilder buf, string json, ref int pos, int skipStart, int headEnd, string until ) {
          if ( json.Length <= headEnd ) return false;
          int tailStart = json.IndexOf( until, headEnd );
          if ( tailStart < 0 ) return false;
@@ -209,26 +210,13 @@ Loop:
             return false;
          }
          string row = ___rows[ ___activeIdx++ ];
-         if ( ! row.Contains( '"' ) ) {
-            __result = row.Split( ',' ).ToList();
-            /*
-            // Works the same but not measurably faster than Linq.
-            int start = 0, len = row.Length, pos;
-            while ( start < len && ( pos = row.IndexOf( ',', start ) ) >= 0 ) {
-               __result.Add( row.Substring( start, pos - start ) );
-               start = pos + 1;
-            }
-            if ( start < len )
-               __result.Add( row.Substring( start ) );
-            else if ( start == len )
-               __result.Add( "" );
-            */
-
-         } else {
+         if ( row.Contains( '"' ) ) {
             __result = new List<string>( 11 );
             foreach ( object match in csvField.Matches( row ) )
                __result.Add( Unescape( match.ToString() ) );
-         }
+         } else
+            __result = row.Split( ',' ).ToList();
+
          return false;
       }
    }

@@ -63,7 +63,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       }                 catch ( Exception ex ) { return Error( ex ); } }
 
       public static void Save_CombatGameConstants_Data ( MessageCenterMessage message ) {
-         if ( message is DataManagerRequestCompleteMessage<string> msg && msg.ResourceType == BattleTechResourceType.CombatGameConstants ) { try {
+         if ( message is DataManagerRequestCompleteMessage<string> msg && msg.Resource != null && msg.ResourceType == BattleTechResourceType.CombatGameConstants ) { try {
             string json = Regex.Replace( DataProcess.StripComments( msg.Resource ), @"(?<=\n)\s+", "" ); // 48K to 32K
             fastJSON.JSON.Parse( json );
             CombatConstantJSON = ZipStr( json ); // 32K to 8K

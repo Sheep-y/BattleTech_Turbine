@@ -13,11 +13,9 @@ using System.Threading;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
-using UnityEngine;
 using static System.Reflection.BindingFlags;
 
 namespace Sheepy.BattleTechMod {
-   using Sheepy.Logging;
 
    public abstract class BattleMod : BattleModModule {
 

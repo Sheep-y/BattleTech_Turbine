@@ -307,7 +307,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                      if ( dependencyLoader != null ) {
                         request.RequestWeight.SetAllowedWeight( ___foregroundRequestsCurrentAllowedWeight );
                         dependencyLoader.RequestDependencies( me, () => {
-                           if ( dependencyLoader.DependenciesLoaded( request.RequestWeight.AllowedWeight ) )
+                           if ( dependencyLoader.DependenciesLoaded( ___foregroundRequestsCurrentAllowedWeight ) )
                               request.NotifyLoadComplete();
                         }, request );
                         if ( ! DisableLoadCheck ) {
@@ -318,7 +318,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                               heavyLoad++;
                         }
                         ___isLoading = true;
-                        me.ResetRequestsTimeout();
+                        if ( ! NeverTimeout ) me.ResetRequestsTimeout();
                      }
                   } else
                      request.NotifyLoadComplete();
@@ -342,7 +342,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                      ___isLoading = true;
                      if ( DebugLog ) Verbo( "Loading {0}.", GetKey( request ) );
                      request.Load();
-                     me.ResetRequestsTimeout();
+                     if ( ! NeverTimeout ) me.ResetRequestsTimeout();
                   }
                }
             }
@@ -372,7 +372,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                               request.NotifyLoadComplete();
                         }, request );
                         isLoadingAsync.SetValue( me, true );
-                        me.ResetAsyncRequestsTimeout();
+                        if ( ! NeverTimeout ) me.ResetAsyncRequestsTimeout();
                      }
                   } else
                      request.NotifyLoadComplete();
@@ -385,7 +385,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                   isLoadingAsync.SetValue( me, true );
                   if ( DebugLog ) Verbo( "Loading Async {0}.", GetKey( request ) );
                   request.Load();
-                  me.ResetAsyncRequestsTimeout();
+                  if ( ! NeverTimeout ) me.ResetAsyncRequestsTimeout();
                }
                return false;
             }
