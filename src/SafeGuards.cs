@@ -56,7 +56,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       public static bool Override_CombatGameConstants_LoadFromManifest ( CombatGameConstants __instance ) { try {
          if ( CombatConstantJSON == null ) return true;
-         __instance.FromJSON( UnZipStr( CombatConstantJSON ) );
+         __instance.FromJSON( UnzipStr( CombatConstantJSON ) );
          LoadMoraleResources?.Invoke( __instance, null );
          LoadMaintenanceResources?.Invoke( __instance, null );
          return false;
@@ -88,7 +88,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       }
 
       // https://stackoverflow.com/a/2118959/893578
-      public static string UnZipStr ( byte[] input ) {
+      public static string UnzipStr ( byte[] input ) {
          using ( MemoryStream inputStream = new MemoryStream( input ) ) {
             using ( DeflateStream gzip = new DeflateStream( inputStream, CompressionMode.Decompress ) ) {
                using ( StreamReader reader = new StreamReader( gzip, Encoding.UTF8 ) ) {
