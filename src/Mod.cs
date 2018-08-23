@@ -20,11 +20,11 @@ namespace Sheepy.BattleTechMod.Turbine {
       // Maintain a separate loading queue from task queue.
       private const bool LoadingQueue = true;
 
-      // Don't timeout my load!
-      private const bool NeverTimeout = true;
+      // Don't timeout my load!  Set to false!
+      private const bool EnableTimeout = false;
 
-      // Check loads during process requests?
-      private const bool DisableLoadCheck = true;
+      // Check load weights during process requests?  Set to false to skip the checks!
+      private const bool EnableLoadCheck = false;
 
       // Hack MechDef/MechComponentDef dependency checking?
       private const bool OverrideMechDefDependencyCheck = true;
@@ -48,7 +48,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 #pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
       public override void ModStarts () {
          Info( "Loading queue {0}.", LoadingQueue  ? "on" : "off" );
-         Info( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
+         Info( "Timeout {0}.", EnableTimeout  ? "off" : "on" );
          Info( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
          Info( "OverrideMechCompDependencyCheck {0}.", OverrideMechCompDependencyCheck  ? "on" : "off" );
          Log.LogLevel = SourceLevels.Verbose;
@@ -294,7 +294,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          int lightLoad = 0, heavyLoad = 0;
          if ( DebugLog ) Trace( "Processing {0} foreground requests", queue.Count );
          foreach ( DataManager.DataManagerLoadRequest request in queue.ToArray() ) {
-            if ( ! DisableLoadCheck )
+            if ( EnableLoadCheck )
                if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
                   break;
             request.RequestWeight.SetAllowedWeight( ___foregroundRequestsCurrentAllowedWeight );
@@ -310,7 +310,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                            if ( dependencyLoader.DependenciesLoaded( ___foregroundRequestsCurrentAllowedWeight ) )
                               request.NotifyLoadComplete();
                         }, request );
-                        if ( ! DisableLoadCheck ) {
+                        if ( EnableLoadCheck ) {
                            if ( request.RequestWeight.RequestWeight == 10u ) {
                               if ( DataManager.MaxConcurrentLoadsLight > 0 )
                                  lightLoad++;
@@ -318,12 +318,12 @@ namespace Sheepy.BattleTechMod.Turbine {
                               heavyLoad++;
                         }
                         ___isLoading = true;
-                        if ( ! NeverTimeout ) me.ResetRequestsTimeout();
+                        if ( EnableTimeout ) me.ResetRequestsTimeout();
                      }
                   } else
                      request.NotifyLoadComplete();
                } else {
-                  if ( ! DisableLoadCheck )
+                  if ( EnableLoadCheck )
                      if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
                         break;
                   if ( ! request.ManifestEntryValid ) {
@@ -332,7 +332,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                   } else if ( ! request.RequestWeight.RequestAllowed ) {
                      request.NotifyLoadComplete();
                   } else {
-                     if ( ! DisableLoadCheck ) {
+                     if ( EnableLoadCheck ) {
                         if ( request.RequestWeight.RequestWeight == 10u ) {
                            if ( DataManager.MaxConcurrentLoadsLight > 0 )
                               lightLoad++;
@@ -342,7 +342,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                      ___isLoading = true;
                      if ( DebugLog ) Verbo( "Loading {0}.", GetKey( request ) );
                      request.Load();
-                     if ( ! NeverTimeout ) me.ResetRequestsTimeout();
+                     if ( EnableTimeout ) me.ResetRequestsTimeout();
                   }
                }
             }
@@ -372,7 +372,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                               request.NotifyLoadComplete();
                         }, request );
                         isLoadingAsync.SetValue( me, true );
-                        if ( ! NeverTimeout ) me.ResetAsyncRequestsTimeout();
+                        if ( EnableTimeout ) me.ResetAsyncRequestsTimeout();
                      }
                   } else
                      request.NotifyLoadComplete();
@@ -385,7 +385,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                   isLoadingAsync.SetValue( me, true );
                   if ( DebugLog ) Verbo( "Loading Async {0}.", GetKey( request ) );
                   request.Load();
-                  if ( ! NeverTimeout ) me.ResetAsyncRequestsTimeout();
+                  if ( EnableTimeout ) me.ResetAsyncRequestsTimeout();
                }
                return false;
             }
@@ -490,7 +490,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       public static bool Override_UpdateRequestsTimeout ( DataManager __instance, float deltaTime ) { try {
          if ( UnpatchManager ) return true;
-         if ( NeverTimeout ) return false;
+         if ( ! EnableTimeout ) return false;
          DataManager me = __instance;
          if ( currentTimeout >= 0f ) {
             if ( queue.Any( IsProcessing ) ) {
