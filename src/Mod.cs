@@ -51,7 +51,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          Info( "Timeout {0}.", NeverTimeout  ? "off" : "on" );
          Info( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
          Info( "OverrideMechCompDependencyCheck {0}.", OverrideMechCompDependencyCheck  ? "on" : "off" );
-         Logger.LogLevel = SourceLevels.Verbose;
+         Log.LogLevel = SourceLevels.Verbose;
          stopwatch = new Stopwatch();
          Add( new SafeGuards() );
 
@@ -98,7 +98,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
          Add( new DataProcess() );
 
-         if ( DebugLog ) Logger.LogLevel = SourceLevels.Verbose | SourceLevels.ActivityTracing;
+         if ( DebugLog ) Log.LogLevel = SourceLevels.Verbose | SourceLevels.ActivityTracing;
       }
 
       public override void GameStartsOnce () {

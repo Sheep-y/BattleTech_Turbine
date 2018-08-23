@@ -21,8 +21,8 @@ namespace Sheepy.BattleTechMod.Turbine {
       // Calculate data hash in multi-thread
       private const bool MultiThreadHash = true;
 
-      // Optimise regex of CSVReader.ReadRow
-      private const bool OptimiseReadRowRegex = true;
+      // Optimise CSVReader.ReadRow
+      private const bool OptimiseCsvReadRow = true;
 
       //public static void LogStart() { Info( "Start" ); }
       //public static void LogEnd() { Info( "End" ); }
@@ -32,7 +32,7 @@ namespace Sheepy.BattleTechMod.Turbine {
             Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", NonPublic | Static, "Override_StripComments", null );
          if ( MultiThreadHash )
             Patch( typeof( DataManager ), "GetDataHash", Static, "MultiThreadDataHash", null );
-         if ( OptimiseReadRowRegex ) {
+         if ( OptimiseCsvReadRow ) {
             csvField = new Regex( "((?<=\\\")(?>[^\\\"]*)(?=\\\"(,|$)+)|(?<=,|^)(?>[^,\\\"]*)(?=,|$))", RegexOptions.Multiline | RegexOptions.Compiled );
             Patch( typeof( CSVReader ), "ReadRow", new Type[]{}, "Override_CSVReader_ReadRow", null );
          }
@@ -208,9 +208,27 @@ Loop:
             __result = null;
             return false;
          }
-         __result = new List<string>();
-         foreach ( object match in csvField.Matches( ___rows[ ___activeIdx++ ] ) )
-            __result.Add( Unescape( match.ToString() ) );
+         string row = ___rows[ ___activeIdx++ ];
+         if ( ! row.Contains( '"' ) ) {
+            __result = row.Split( ',' ).ToList();
+            /*
+            // Works the same but not measurably faster than Linq.
+            int start = 0, len = row.Length, pos;
+            while ( start < len && ( pos = row.IndexOf( ',', start ) ) >= 0 ) {
+               __result.Add( row.Substring( start, pos - start ) );
+               start = pos + 1;
+            }
+            if ( start < len )
+               __result.Add( row.Substring( start ) );
+            else if ( start == len )
+               __result.Add( "" );
+            */
+
+         } else {
+            __result = new List<string>( 11 );
+            foreach ( object match in csvField.Matches( row ) )
+               __result.Add( Unescape( match.ToString() ) );
+         }
          return false;
       }
    }
