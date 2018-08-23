@@ -90,6 +90,6 @@ But its real value is its sensors, installed in all parts, that allow it to log 
 # Credits
 
 * Thanks [Denedan](https://github.com/Denadan) for finding the two original [performance](https://github.com/saltyhotdog/BattletechIssueTracker/issues/14) [issues](https://github.com/saltyhotdog/BattletechIssueTracker/issues/17)
-* Thanks [Matthew Spencer](https://github.com/m22spencer) for doing very detailed and amazing profiling so that I know where to start hacking.
+* Thanks [Matthew Spencer](https://github.com/m22spencer) for doing very detailed and amazing profiling so that I know where to start hacking, and suggested ways to speed the game up further.
 * Thanks LadyAlekto and many brave RogueTech users on the BATTLETECHGAME discord for testing the mod despite its high tendency to explode their games.
 * Thanks HBS the game developer for giving me a ComStar experience when working on this mod.  Can't get any closer to maintaining Lostech.

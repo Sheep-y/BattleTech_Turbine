@@ -23,6 +23,9 @@ namespace Sheepy.BattleTechMod.Turbine {
       // Don't timeout my load!
       private const bool NeverTimeout = true;
 
+      // Check loads during process requests?
+      private const bool DisableLoadCheck = true;
+
       // Hack MechDef/MechComponentDef dependency checking?
       private const bool OverrideMechDefDependencyCheck = true;
       private const bool OverrideMechCompDependencyCheck = false;
@@ -291,8 +294,9 @@ namespace Sheepy.BattleTechMod.Turbine {
          int lightLoad = 0, heavyLoad = 0;
          if ( DebugLog ) Trace( "Processing {0} foreground requests", queue.Count );
          foreach ( DataManager.DataManagerLoadRequest request in queue.ToArray() ) {
-            if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
-               break;
+            if ( ! DisableLoadCheck )
+               if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
+                  break;
             request.RequestWeight.SetAllowedWeight( ___foregroundRequestsCurrentAllowedWeight );
             if ( request.State == DataManager.DataManagerLoadRequest.RequestState.Requested ) {
                if ( request.IsMemoryRequest )
@@ -306,30 +310,35 @@ namespace Sheepy.BattleTechMod.Turbine {
                            if ( dependencyLoader.DependenciesLoaded( request.RequestWeight.AllowedWeight ) )
                               request.NotifyLoadComplete();
                         }, request );
-                        if ( request.RequestWeight.RequestWeight == 10u ) {
-                           if ( DataManager.MaxConcurrentLoadsLight > 0 )
-                              lightLoad++;
-                        } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
-                           heavyLoad++;
+                        if ( ! DisableLoadCheck ) {
+                           if ( request.RequestWeight.RequestWeight == 10u ) {
+                              if ( DataManager.MaxConcurrentLoadsLight > 0 )
+                                 lightLoad++;
+                           } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
+                              heavyLoad++;
+                        }
                         ___isLoading = true;
                         me.ResetRequestsTimeout();
                      }
                   } else
                      request.NotifyLoadComplete();
                } else {
-                  if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
-                     break;
+                  if ( ! DisableLoadCheck )
+                     if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
+                        break;
                   if ( ! request.ManifestEntryValid ) {
                      logger.LogError( string.Format( "LoadRequest for {0} of type {1} has an invalid manifest entry. Any requests for this object will fail.", request.ResourceId, request.ResourceType ) );
                      request.NotifyLoadFailed();
                   } else if ( ! request.RequestWeight.RequestAllowed ) {
                      request.NotifyLoadComplete();
                   } else {
-                     if ( request.RequestWeight.RequestWeight == 10u ) {
-                        if ( DataManager.MaxConcurrentLoadsLight > 0 )
-                           lightLoad++;
-                     } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
-                        heavyLoad++;
+                     if ( ! DisableLoadCheck ) {
+                        if ( request.RequestWeight.RequestWeight == 10u ) {
+                           if ( DataManager.MaxConcurrentLoadsLight > 0 )
+                              lightLoad++;
+                        } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
+                           heavyLoad++;
+                     }
                      ___isLoading = true;
                      if ( DebugLog ) Verbo( "Loading {0}.", GetKey( request ) );
                      request.Load();
