@@ -1,5 +1,5 @@
-# Turbine 1.1 #
-For BATTLETECH 1.1.2
+# Turbine 1.1.1 #
+For BATTLETECH 1.1.2 and 1.2.0
 
 Turbine is a BattleTech mod that lighten and speed up the game's resource loading.
 If your game has a tendency to crash on very long loads, this mod *may* fix your problem.
@@ -27,14 +27,11 @@ This mod does not fix memory leaks, either.  Rest your eyes.
 
 # Compatibility
 
-Compatible with original BTML v0.23 and Janxious's [BTML v0.3](https://github.com/janxious/BattleTechModLoader/releases/tag/v0.3.0-alpha).
+Compatible with original BTML v0.23 and Janxious's [updated BTMLs](https://github.com/janxious/BattleTechModLoader/releases/).
 
 Turbine is not expected to work with mods that also speed up *resource* loading, such as WhySoSlow.
 
 It should otherwise work with all mods, including those that add new files for the game to load.
-
-If it doesn't work for you, you can try to use the debug version which will generate a pretty detailed log,
-then creates a new issue and attach it.  The log used to be very slow, but now much faster since 1.0.5.
 
 
 # How It Works
