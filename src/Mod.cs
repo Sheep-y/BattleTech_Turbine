@@ -303,7 +303,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                   me.RemoveObjectOfType( request.ResourceId, request.ResourceType );
                if ( request.AlreadyLoaded ) {
                   if ( ! request.DependenciesLoaded( ___foregroundRequestsCurrentAllowedWeight ) ) {
-                     DataManager.ILoadDependencies dependencyLoader = request.TryGetLoadDependencies();
+                     DataManager.ILoadDependencies dependencyLoader = request.TryGetDependencyLoader();
                      if ( dependencyLoader != null ) {
                         request.RequestWeight.SetAllowedWeight( ___foregroundRequestsCurrentAllowedWeight );
                         dependencyLoader.RequestDependencies( me, () => {
@@ -364,7 +364,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                   me.RemoveObjectOfType( request.ResourceId, request.ResourceType );
                if ( request.AlreadyLoaded ) {
                   if ( !request.DependenciesLoaded( ___backgroundRequestsCurrentAllowedWeight ) ) {
-                     DataManager.ILoadDependencies dependencyLoader = request.TryGetLoadDependencies();
+                     DataManager.ILoadDependencies dependencyLoader = request.TryGetDependencyLoader();
                      if ( dependencyLoader != null ) {
                         request.RequestWeight.SetAllowedWeight( ___backgroundRequestsCurrentAllowedWeight );
                         dependencyLoader.RequestDependencies( me, () => {
