@@ -4,28 +4,14 @@ using Sheepy.Logging;
 using System;
 using System.Diagnostics;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Reflection;
 
 namespace Sheepy.BattleTechMod.Turbine {
-   using static System.Reflection.BindingFlags;
 
    public class Mod : BattleMod {
 
       // A kill switch to press when any things go wrong during initialisation.
       // Default true and set to false after initial patch success.  Also set to true after any exception.
       private static bool UnpatchManager = true;
-
-      // Don't timeout my load!  Set to false!
-      private const bool EnableTimeout = false;
-
-      // Check load weights during process requests?  Set to false to skip the checks!
-      private const bool EnableLoadCheck = false;
-
-      // Hack MechDef/MechComponentDef dependency checking?
-      private const bool OverrideMechDefDependencyCheck = false;
-      private const bool OverrideMechCompDependencyCheck = false;
 
       // Performance hit varies by machine spec.
       internal const bool DebugLog = false;
@@ -34,59 +20,15 @@ namespace Sheepy.BattleTechMod.Turbine {
          new Mod().Start( ref ModLog );
       }
 
-      private static Type dmType;
-
-      static void Main () {
-         string input = File.ReadAllText( "data.json" );
-         Console.Write( DataProcess.StripComments( input ) );
-         Console.ReadKey();
-      }
-
-#pragma warning disable CS0162 // Disable warning of unreachable code due to DebugLog
       public override void ModStarts () {
-         Info( "Timeout {0}.", EnableTimeout  ? "off" : "on" );
-         Info( "OverrideMechDefDependencyCheck {0}.", OverrideMechDefDependencyCheck  ? "on" : "off" );
-         Info( "OverrideMechCompDependencyCheck {0}.", OverrideMechCompDependencyCheck  ? "on" : "off" );
          Log.LogLevel = SourceLevels.Verbose;
-         stopwatch = new Stopwatch();
          Add( new SafeGuards() );
 
-         Verbo( "Ok let's try to install real Turbine." );
-         dmType = typeof( DataManager );
-         prewarmRequests = dmType.GetField( "prewarmRequests", NonPublic | Instance );
-         CreateByResourceType = dmType.GetMethod( "CreateByResourceType", NonPublic | Instance );
-         ThrowAnyNull<object>( "DataManager field #{0}/2 not found.", prewarmRequests, CreateByResourceType );
+         Verbo( "Applying Turbine." );
+         Type dmType = typeof( DataManager );
          logger = HBS.Logging.Logger.GetLogger( "Data.DataManager" );
-         Patch( dmType.GetConstructors()[0], nameof( DataManager_ctor ), null );
-         Patch( dmType, "get_IsLoadingForeground", nameof( Override_IsLoadingForeground ), null );
-         Patch( dmType, "get_IsLoadingBackground", nameof( Override_IsLoadingBackground ), null );
-         Patch( dmType, "Clear", nameof( Override_Clear ), null );
-         Patch( dmType, "CheckBackgroundRequestsComplete", nameof( Override_CheckRequestsComplete ), null );
-         Patch( dmType, "CheckRequestsComplete", nameof( Override_CheckRequestsComplete ), null );
-         Patch( dmType, "GraduateBackgroundRequest", nameof( Override_GraduateBackgroundRequest ), null );
-         Patch( dmType, "NotifyFileLoaded", nameof( Override_NotifyFileLoaded ), null );
-         Patch( dmType, "NotifyFileLoadedAsync", nameof( Override_NotifyFileLoadedAsync ), null );
-         Patch( dmType, "NotifyFileLoadFailed", nameof( Override_NotifyFileLoadFailed ), null );
-         Patch( dmType, "ProcessAsyncRequests", nameof( Override_ProcessAsyncRequests ), null );
          Patch( dmType, "ProcessRequests", nameof( Override_ProcessRequests ), null );
-         Patch( dmType, "RequestResourceAsync_Internal", nameof( Override_RequestResourceAsync_Internal ), null );
-         Patch( dmType, "RequestResource_Internal", nameof( Override_RequestResource_Internal ), null );
-         Patch( dmType, "SetLoadRequestWeights", nameof( Override_SetLoadRequestWeights ), null );
-         Patch( dmType, "UpdateRequestsTimeout", nameof( Override_UpdateRequestsTimeout ), null );
-         foreground = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
-         background = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
-         foregroundLoading = new HashSet<DataManager.DataManagerLoadRequest>();
-         depender = new Dictionary<object, HashSet<string>>();
-         dependee = new Dictionary<string, HashSet<object>>();
-         if ( OverrideMechDefDependencyCheck ) {
-            Patch( typeof( MechDef ), "CheckDependenciesAfterLoad", nameof( Skip_CheckMechDependenciesAfterLoad ), nameof( Cleanup_CheckMechDependenciesAfterLoad ) );
-            Patch( typeof( MechDef ), "RequestDependencies", nameof( StartLogMechDefDependencies ), nameof( StopLogMechDefDependencies ) );
-         }
-         if ( OverrideMechCompDependencyCheck ) {
-            LoadedComp = new HashSet<MechComponentDef>();
-            Patch( typeof( MechComponentDef ), "DependenciesLoaded", null, nameof( Record_CompDependenciesLoaded ) );
-            Patch( typeof( MechComponentDef ), "CheckDependenciesAfterLoad", nameof( Skip_CheckCompDependenciesAfterLoad ), nameof( Cleanup_CheckCompDependenciesAfterLoad ) );
-         }
+         Patch( dmType, "RequestResource_Internal", nameof( Prefix_RequestResource_Internal ), null );
          UnpatchManager = false;
          Info( "Turbine initialised" );
 
@@ -102,496 +44,57 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       // ============ Compressor & Turbine - the main rewrite ============
 
-      // Manager states that were taken over
-      private static Dictionary<string, DataManager.DataManagerLoadRequest> foreground, background;
-      private static HashSet<DataManager.DataManagerLoadRequest> foregroundLoading;
-      private static float currentTimeout = -1, currentAsyncTimeout = -1;
-
       // Cache or access to original manager states
-      private static DataManager manager;
-      private static MessageCenter center;
       private static HBS.Logging.ILog logger;
-      private static FieldInfo prewarmRequests;
-      private static MethodInfo CreateByResourceType;
 
-      // Track queue time
-      private static Stopwatch stopwatch;
-      private static long totalLoadTime = 0;
-
-      private static string GetName ( object obj ) { 
-         if ( obj is MechDef mech ) return mech.Name + " (" + mech.ChassisID + ")";
-         if ( obj is MechComponentDef comp ) return comp.Description.Manufacturer + " " + comp.Description.Name;
-         return obj?.ToString() ?? null;
-      }
-      internal static string GetKey ( DataManager.DataManagerLoadRequest request ) { return GetKey( request.ResourceType, request.ResourceId ); }
-      internal static string GetKey ( BattleTechResourceType resourceType, string id ) { return (int) resourceType + "_" + id; }
-
-      public static void DataManager_ctor ( MessageCenter messageCenter ) {
-         center = messageCenter;
-         if ( DebugLog ) Info( "DataManager created." );
-      }
-
-      private static bool IsLoadingForeground () { return background.IsNullOrEmpty(); }
-      private static bool IsLoadingBackground () { return background.IsNullOrEmpty(); }
-
-      public static bool Override_IsLoadingForeground ( ref bool __result ) {
+      public static bool Override_ProcessRequests ( DataManager __instance, List<DataManager.DataManagerLoadRequest> ___foregroundRequestsList, uint ___foregroundRequestsCurrentAllowedWeight ) { try {
          if ( UnpatchManager ) return true;
-         __result = IsLoadingForeground();
-         return false;
-      }
-
-      public static bool Override_IsLoadingBackground ( ref bool __result ) {
-         if ( UnpatchManager ) return true;
-         __result = IsLoadingBackground();
-         return false;
-      }
-
-      public static void Override_Clear ( DataManager __instance ) {
-         if ( UnpatchManager ) return;
-         foreground.Clear();
-         background.Clear();
-         foregroundLoading.Clear();
-         depender.Clear();
-         dependee.Clear();
-         if ( DebugLog ) Info( "All queues cleared." );
-         manager = __instance;
-      }
-
-      public static bool Override_CheckRequestsComplete ( ref bool __result ) {
-         if ( UnpatchManager ) return true;
-         __result = CheckRequestsComplete();
-         return false;
-      }
-      public static bool Override_CheckAsyncRequestsComplete ( ref bool __result ) {
-         if ( UnpatchManager ) return true;
-         __result = CheckAsyncRequestsComplete();
-         return false;
-      }
-
-      private static void CheckRequestsComplete ( ICollection<DataManager.DataManagerLoadRequest> queue, Action<DataManager.DataManagerLoadRequest> unqueue ) {
-         bool allProcessing = true;
-         List<DataManager.DataManagerLoadRequest> complete = null;
-         foreach ( var request in queue ) {
-            if ( request.IsComplete() ) {
-               if ( complete == null ) complete = new List<DataManager.DataManagerLoadRequest>();
-               complete.Add( request );
-            } else if ( allProcessing && request.State != DataManager.DataManagerLoadRequest.RequestState.Processing )
-               allProcessing = false;
-         }
-         if ( complete != null ) {
-            foreach ( var request in complete ) unqueue( request );
-            foreach ( var request in complete ) request.SendLoadCompleteMessage();
-         }
-         if ( allProcessing )
-            foreach ( var request in complete ) {
-               DataManager.ILoadDependencies loadDependencies = request.TryGetDependencyLoader();
-               if ( loadDependencies != null && loadDependencies.DependenciesLoaded( request.RequestWeight.AllowedWeight ) ) {
-                  loadDependencies.CheckDependenciesAfterLoad( new DataManagerRequestCompleteMessage( BattleTechResourceType.MechDef, "dummy" ) );
-                  request.OnLoaded();
-               }
+			for ( int i = 0, len = ___foregroundRequestsList.Count ; i < len ; i++ ) {
+				DataManager.DataManagerLoadRequest request = ___foregroundRequestsList[ i ];
+				if ( request.State != DataManager.DataManagerLoadRequest.RequestState.Requested ) continue;
+				request.RequestWeight.SetAllowedWeight( ___foregroundRequestsCurrentAllowedWeight );
+				if ( request.IsMemoryRequest )
+					__instance.RemoveObjectOfType( request.ResourceId, request.ResourceType );
+				if ( ! request.ManifestEntryValid )
+					LogManifestEntryValid( request );
+				else if (!request.RequestWeight.RequestAllowed)
+					request.NotifyLoadComplete();
+				else {
+               if ( DebugLog ) Trace( "Loading {0} {1}", request.ResourceType, request.ResourceId );
+					request.Load();
             }
-      }
-
-      private static bool CheckRequestsComplete () {
-         CheckRequestsComplete( foregroundLoading, e => foregroundLoading.Remove( e ) );
-         return foreground.Count <= 0;
-      }
-
-      private static bool CheckAsyncRequestsComplete () {
-         CheckRequestsComplete( background.Values, e => background.Remove( GetKey( e ) ) );
-         return background.Count <= 0;
-      }
-
-      private static bool IsComplete ( DataManager.DataManagerLoadRequest e ) { return e.IsComplete(); }
-
-      public static bool Override_GraduateBackgroundRequest ( DataManager __instance, ref bool __result, BattleTechResourceType resourceType, string id ) { try {
-         if ( UnpatchManager ) return true;
-         __result = GraduateBackgroundRequest( __instance, resourceType, id );
+			}
          return false;
-      }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
+      }                 catch ( Exception ex ) { return KillManagerPatch( ex ); } }
 
-      private static bool GraduateBackgroundRequest ( DataManager me, BattleTechResourceType resourceType, string id ) {
-         string key = GetKey( resourceType, id );
-         if ( ! background.TryGetValue( key, out DataManager.DataManagerLoadRequest request ) )
-            return false;
-         if ( DebugLog ) Info( "Graduating {0} ({1}) from background to foreground.", GetKey( request ), request.GetType() );
-         bool wasLoadingAsync = IsLoadingBackground();
-         request.SetAsync( false );
-         request.ResetRequestState();
-         background.Remove( key );
-         foreground.Add( key, request );
-         if ( ! request.IsComplete() )
-            foregroundLoading.Add( request );
-         if ( wasLoadingAsync != IsLoadingBackground() ) {
-            background.Clear();
-            center.PublishMessage( new DataManagerAsyncLoadCompleteMessage() );
-         }
-         return true;
+      private static void LogManifestEntryValid ( DataManager.DataManagerLoadRequest request ) {
+         logger.LogError( string.Format("LoadRequest for {0} of type {1} has an invalid manifest entry. Any requests for this object will fail.", request.ResourceId, request.ResourceType ) );
+         request.NotifyLoadFailed();
       }
-
-      public static bool Override_NotifyFileLoaded ( DataManager __instance, DataManager.DataManagerLoadRequest request ) { try {
-         if ( UnpatchManager ) return true;
-         NotifyFileLoaded( __instance, request );
-         return false;
-      }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
-
-      private static void NotifyFileLoaded ( DataManager me, DataManager.DataManagerLoadRequest request ) {
-         if ( request.Prewarm != null ) {
-            if ( DebugLog ) Trace( "Notified Prewarm: {0}", GetKey( request ) );
-            List<PrewarmRequest> pre = (List<PrewarmRequest>) prewarmRequests.GetValue( me );
-            pre.Remove( request.Prewarm );
-         }
-         if ( DebugLog ) Trace( "Notified Done: {0}", GetKey( request ) );
-      }
-
-      public static bool Override_NotifyFileLoadedAsync ( DataManager __instance, DataManager.DataManagerLoadRequest request ) { try {
-         if ( UnpatchManager ) return true;
-         NotifyFileLoadedAsync( __instance, request );
-         return false;
-      }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
-
-      private static void NotifyFileLoadedAsync ( DataManager me, DataManager.DataManagerLoadRequest request ) {
-         if ( request.Prewarm != null ) {
-            if ( DebugLog ) Trace( "Notified Prewarm Async: " + GetKey( request ) );
-            List<PrewarmRequest> pre = (List<PrewarmRequest>) prewarmRequests.GetValue( me );
-            pre.Remove( request.Prewarm );
-         }
-         if ( DebugLog ) Trace( "Notified Done Async: " + GetKey( request ) );
-      }
-
-      public static bool Override_NotifyFileLoadFailed ( DataManager __instance, DataManager.DataManagerLoadRequest request ) { try {
-         if ( UnpatchManager ) return true;
-         string key = GetKey( request );
-         if ( DebugLog ) Trace ( "Notified Failed: {0}", key );
-         if ( foreground.Remove( key ) )
-            NotifyFileLoaded( __instance, request );
-         else if ( background.Remove( key ) )
-            NotifyFileLoadedAsync( __instance, request );
-         return false;
-      }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
-
-      private static void CheckMechDefDependencies ( DataManager.DataManagerLoadRequest request ) {
-         string key = GetKey( request );
-         if ( ! dependee.TryGetValue( key, out HashSet<object> dependents ) ) return;
-         dependee.Remove( key );
-         foreach ( object dependent in dependents ) {
-            if ( depender.TryGetValue( dependent, out HashSet<string> list ) && list.Remove( key ) ) {
-               if ( list.Count > 0 ) {
-                  if ( DebugLog ) Trace( "Found MechDef dependency. Check {0} of {1}. {2} remains.", key, GetName( dependent ), list.Count );
-                  continue;
-               }
-               if ( DebugLog ) Verbo( "All depencency loaded for {0}.\n{1}", GetName( dependent ) );
-               checkingMech = null;
-               if ( dependent is MechDef mech )
-                  mech.CheckDependenciesAfterLoad( new DataManagerLoadCompleteMessage() );
-            }
-         }
-      }
-
-      public static bool Override_ProcessRequests ( DataManager __instance, uint ___foregroundRequestsCurrentAllowedWeight ) { try {
-         if ( UnpatchManager ) return true;
-         if ( foregroundLoading.Count <= 0 ) IsLoadingForeground(); // Triggers dependency checks
-         DataManager me = __instance;
-         int lightLoad = 0, heavyLoad = 0;
-         if ( DebugLog ) Trace( "Processing {0} foreground requests", foregroundLoading.Count );
-         foreach ( DataManager.DataManagerLoadRequest request in foregroundLoading.ToArray() ) {
-            if ( EnableLoadCheck )
-               if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
-                  return false;
-            if ( request.State == DataManager.DataManagerLoadRequest.RequestState.Requested ) {
-               request.RequestWeight.SetAllowedWeight( ___foregroundRequestsCurrentAllowedWeight );
-               if ( request.IsMemoryRequest )
-                  me.RemoveObjectOfType( request.ResourceId, request.ResourceType );
-               if ( EnableLoadCheck )
-                  if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
-                     return false;
-               if ( ! request.ManifestEntryValid ) {
-                  logger.LogError( string.Format( "LoadRequest for {0} of type {1} has an invalid manifest entry. Any requests for this object will fail.", request.ResourceId, request.ResourceType ) );
-                  request.NotifyLoadFailed();
-               } else if ( ! request.RequestWeight.RequestAllowed ) {
-                  request.NotifyLoadComplete();
-               } else {
-                  if ( EnableLoadCheck ) {
-                     if ( request.RequestWeight.RequestWeight == 10u ) {
-                        if ( DataManager.MaxConcurrentLoadsLight > 0 )
-                           lightLoad++;
-                     } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
-                        heavyLoad++;
-                  }
-                  if ( DebugLog ) Verbo( "Loading {0}.", GetKey( request ) );
-                  request.Load();
-                  if ( EnableTimeout ) me.ResetRequestsTimeout();
-               }
-            } else if ( request.State == DataManager.DataManagerLoadRequest.RequestState.Processing ) {
-               if ( EnableLoadCheck ) {
-                  if ( request.RequestWeight.RequestWeight == 10u ) {
-                     if ( DataManager.MaxConcurrentLoadsLight > 0 )
-                        lightLoad++;
-                  } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
-                     heavyLoad++;
-               }
-            }
-         }
-         return false;
-      }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
-
-      public static bool Override_ProcessAsyncRequests ( DataManager __instance, uint ___backgroundRequestsCurrentAllowedWeight ) {
-         if ( UnpatchManager ) return true;
-         if ( background.Count < 0 ) return false; // Early abort before reflection
-         DataManager me = __instance;
-         if ( DebugLog ) Trace( "Processing {0} background requests", background.Count );
-         foreach ( DataManager.DataManagerLoadRequest request in background.Values ) {
-            DataManager.DataManagerLoadRequest.RequestState state = request.State;
-            if ( state == DataManager.DataManagerLoadRequest.RequestState.Processing ) return false;
-            if ( state == DataManager.DataManagerLoadRequest.RequestState.RequestedAsync ) {
-               request.RequestWeight.SetAllowedWeight( ___backgroundRequestsCurrentAllowedWeight );
-               if ( request.IsMemoryRequest )
-                  me.RemoveObjectOfType( request.ResourceId, request.ResourceType );
-               if ( ! request.ManifestEntryValid ) {
-                  logger.LogError( string.Format( "LoadRequest for {0} of type {1} has an invalid manifest entry. Any requests for this object will fail.", request.ResourceId, request.ResourceType ) );
-                  request.NotifyLoadFailed();
-               } else if ( ! request.RequestWeight.RequestAllowed ) {
-                  request.NotifyLoadComplete();
-               } else {
-                  request.Load();
-                  if ( EnableTimeout ) me.ResetAsyncRequestsTimeout();
-               }
-               return false;
-            }
-         }
-         return false;
-      }
-
-      public static bool Override_RequestResourceAsync_Internal ( DataManager __instance, BattleTechResourceType resourceType, string identifier, PrewarmRequest prewarm, uint ___backgroundRequestsCurrentAllowedWeight ) { try {
-         if ( UnpatchManager || string.IsNullOrEmpty( identifier ) ) return false;
-         DataManager me = __instance;
-         string key = GetKey( resourceType, identifier );
-         background.TryGetValue( key, out DataManager.DataManagerLoadRequest request );
-         if ( request != null ) {
-            if ( request.State == DataManager.DataManagerLoadRequest.RequestState.Complete ) {
-               if ( !request.DependenciesLoaded( ___backgroundRequestsCurrentAllowedWeight ) ) {
-                  request.ResetRequestState();
-               } else {
-                  request.NotifyLoadComplete();
-                  request.SendLoadCompleteMessage();
-               }
-            } else {
-               if ( DebugLog ) Warn( "Cannot move {0} to top of background queue.", GetKey( request ) );
-               // Move to top of queue. Not supported by HashTable.
-               //backgroundRequest.Remove( request );
-               //backgroundRequest.Insert( 0, request );
-            }
-            return false;
-         }
-         bool isForeground = foreground.ContainsKey( key );
-         bool isTemplate = identifier.ToLowerInvariant().Contains("template");
-         if ( ! isForeground && ! isTemplate ) {
-            request = (DataManager.DataManagerLoadRequest) CreateByResourceType.Invoke( me, new object[]{ resourceType, identifier, prewarm } );
-            request.SetAsync( true );
-            if ( DebugLog ) Info( "Queued Async: {0} ({1}) ", key, request.GetType() );
-            background.Add( key, request );
-         }
-         return false;
-      }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
 
       private static BattleTechResourceType lastResourceType;
       private static string lastIdentifier;
 
-      public static bool Override_RequestResource_Internal ( DataManager __instance, BattleTechResourceType resourceType, string identifier, PrewarmRequest prewarm, bool allowRequestStacking ) { try {
-         if ( UnpatchManager || string.IsNullOrEmpty( identifier ) ) return false;
-         // Quickly skip duplicate request
-         if ( resourceType == lastResourceType && identifier == lastIdentifier ) return false;
+      public static bool Prefix_RequestResource_Internal ( DataManager __instance, BattleTechResourceType resourceType, string identifier ) {
+         if ( string.IsNullOrEmpty( identifier ) || ( identifier == lastIdentifier && resourceType == lastResourceType ) ) {
+            if ( DebugLog ) Verbo( "Skipping empty or dup resource {0} {1}", resourceType, identifier );
+            return false;
+         }
          lastResourceType = resourceType;
          lastIdentifier = identifier;
-         DataManager me = __instance;
-         string key = GetKey( resourceType, identifier );
-         if ( monitoringMech != null ) LogDependee( monitoringMech, key );
-         foreground.TryGetValue( key, out DataManager.DataManagerLoadRequest request );
-         if ( request != null ) {
-            if ( request.State != DataManager.DataManagerLoadRequest.RequestState.Complete || !request.DependenciesLoaded( request.RequestWeight.RequestWeight ) ) {
-               if ( allowRequestStacking )
-                  request.IncrementCacheCount();
-            } else
-               NotifyFileLoaded( me, request );
-            return false;
-         }
-         bool movedToForeground = GraduateBackgroundRequest( me, resourceType, identifier);
-         bool skipLoad = false;
-         bool isTemplate = identifier.ToLowerInvariant().Contains("template");
-         if ( !movedToForeground && !skipLoad && !isTemplate ) {
-            request = (DataManager.DataManagerLoadRequest) CreateByResourceType.Invoke( me, new object[]{ resourceType, identifier, prewarm } );
-            if ( foreground.Count <= 0 ) {
-               Info( "Starting new queue" );
-               stopwatch.Start();
-            }
-            if ( DebugLog ) Verbo( "Queued: {0} ({1})", key, request.GetType() );
-            //if ( key == "19_CombatGameConstants" ) Info( Logger.Stacktrace );
-            foreground.Add( key, request );
-            if ( ! request.IsComplete() )
-               foregroundLoading.Add( request );
-         }
-         return false;
-      }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
-
-      private static void LogDependee ( object monitored, string key ) {
-         if ( ! dependee.TryGetValue( key, out HashSet<object> depList ) )
-            dependee[ key ] = depList = new HashSet<object>();
-         if ( ! depList.Contains( monitored ) ) {
-            if ( DebugLog ) Verbo( "   " + GetName( monitored ) + " requested " + key );
-            depList.Add( monitored );
-            if ( depender.TryGetValue( monitored, out HashSet<string> dependList ) )
-               dependList.Add( key );
-         }
-      }
-
-      public static bool Override_SetLoadRequestWeights ( DataManager __instance, uint foregroundRequestWeight, uint backgroundRequestWeight, ref uint ___foregroundRequestsCurrentAllowedWeight, ref uint ___backgroundRequestsCurrentAllowedWeight ) { try {
-         if ( UnpatchManager ) return true;
-         if ( DebugLog ) Info( "Set LoadRequestWeights {0}/{1} on {2}/{3} loading foreground/background requests.", foregroundRequestWeight, backgroundRequestWeight, foregroundLoading.Count, background.Count );
-         ___foregroundRequestsCurrentAllowedWeight = foregroundRequestWeight;
-         ___backgroundRequestsCurrentAllowedWeight = backgroundRequestWeight;
-         foreach ( DataManager.DataManagerLoadRequest request in foregroundLoading )
-            if ( foregroundRequestWeight > request.RequestWeight.AllowedWeight )
-               request.RequestWeight.SetAllowedWeight( foregroundRequestWeight );
-         foreach ( DataManager.DataManagerLoadRequest request in background.Values )
-            if ( backgroundRequestWeight > request.RequestWeight.AllowedWeight )
-               request.RequestWeight.SetAllowedWeight( backgroundRequestWeight );
-         return false;
-      }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
-
-      public static bool Override_UpdateRequestsTimeout ( DataManager __instance, float deltaTime ) { try {
-         if ( UnpatchManager ) return true;
-         if ( ! EnableTimeout ) return false;
-         DataManager me = __instance;
-         if ( currentTimeout >= 0f ) {
-            if ( foregroundLoading.Any( IsProcessing ) ) {
-               if ( DebugLog ) Warn( "Foreground request timeout." );
-               DataManager.DataManagerLoadRequest[] list = foregroundLoading.Where( IsProcessing ).ToArray();
-               currentTimeout += deltaTime;
-               if ( currentTimeout > list.Count() * 0.2f ) {
-                  foreach ( DataManager.DataManagerLoadRequest request in list ) {
-                     logger.LogWarning( string.Format( "DataManager Request for {0} has taken too long. Cancelling request. Your load will probably fail", request.ResourceId ) );
-                     request.NotifyLoadFailed();
-                  }
-                  currentTimeout = -1f;
-               }
-            }
-         }
-         if ( currentAsyncTimeout >= 0f && background.Count > 0 ) {
-            currentAsyncTimeout += deltaTime;
-            if ( currentAsyncTimeout > 20f ) {
-               if ( DebugLog ) Warn( "Background request timeout." );
-               DataManager.DataManagerLoadRequest request = background.Values.First( IsProcessing );
-               if ( request != null ) {
-                  logger.LogWarning( string.Format( "DataManager Async Request for {0} has taken too long. Cancelling request. Your load will probably fail", request.ResourceId ) );
-                  request.NotifyLoadFailed();
-               }
-               currentAsyncTimeout = -1f;
-            }
-         }
-         return false;
-      }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
-
-      private static bool IsProcessing ( DataManager.DataManagerLoadRequest e ) {
-         return e.State == DataManager.DataManagerLoadRequest.RequestState.Processing;
-      }
-
-      // ============ MechDef Bypass ============
-
-      private static Dictionary<object, HashSet<string>> depender;
-      private static Dictionary<string, HashSet<object>> dependee;
-      private static MechDef monitoringMech, checkingMech;
-
-      public static bool Skip_CheckMechDependenciesAfterLoad ( MechDef __instance, MessageCenterMessage message ) { try {
-         if ( UnpatchManager ) return true;
-         MechDef me = __instance;
-         if ( ! depender.TryGetValue( me, out HashSet<string> toLoad ) ) {
-            if ( checkingMech == null ) {
-               if ( DebugLog ) Verbo( "Allowing MechDef verify {0}.", GetName( me ) );
-               checkingMech = __instance;
-               return true;
-            }
-            if ( DebugLog ) Trace( "Bypassing MechDef check {0} because checking {1}.", GetName( me ), GetName( checkingMech ) );
-            return false;
-         }
-         if ( toLoad.Count > 0 ) {
-            if ( DebugLog ) Trace( "Bypassing MechDef check {0} because waiting for {1}.", GetName( me ), toLoad.First() );
-            return false;
-         }
-         if ( DebugLog ) Verbo( "Allowing MechDef check {0}.", GetName( me ) );
-         depender.Remove( me );
          return true;
-      }                 catch ( Exception ex ) { return Error( ex ); } }
-
-      public static void Cleanup_CheckMechDependenciesAfterLoad ( MechDef __instance ) {
-         if ( checkingMech == __instance ) checkingMech = null;
-      }
-
-      public static void StartLogMechDefDependencies ( MechDef __instance ) {
-         if ( UnpatchManager ) return;
-         if ( monitoringMech != null ) Warn( "Already logging dependencies for " + GetName( monitoringMech ) );
-         monitoringMech = __instance;
-         if ( DebugLog ) Verbo( "Start logging dependencies of {0}.", GetName( monitoringMech ) );
-         if ( ! depender.ContainsKey( __instance ) )
-            depender[ __instance ] = new HashSet<string>();
-      }
-
-      public static void StopLogMechDefDependencies () {
-         if ( DebugLog ) Trace( "Stop logging dependencies of {0}.", GetName( monitoringMech ) );
-         monitoringMech = null;
-      }
-
-      // ============ MechComponentDef Bypass ============
-
-      private static MechComponentDef checkingComp;
-      private static HashSet<MechComponentDef> LoadedComp;
-
-      public static void Record_CompDependenciesLoaded ( MechComponentDef __instance, bool __result ) {
-         if ( __result && __instance.statusEffects != null && __instance.statusEffects.Length > 0 )
-            LoadedComp.Add( __instance );
-      }
-
-      public static bool Skip_CheckCompDependenciesAfterLoad ( MechComponentDef __instance ) { try {
-         if ( UnpatchManager ) return true;
-         MechComponentDef me = __instance;
-         if ( checkingComp == null ) {
-            if ( me.statusEffects != null && me.statusEffects.Length > 0 && LoadedComp.Contains( me ) ) {
-               if ( DebugLog ) Trace( "Skipping MechComponentDef check {0} because already finished loading.", GetName( me ) );
-               return false;
-            }
-            if ( DebugLog ) Verbo( "Allowing MechComponentDef verify {0}.", GetName( me ) );
-            checkingComp = __instance;
-            return true;
-         }
-         if ( DebugLog ) Trace( "Skipping MechComponentDef check {0} because checking {1}.", GetName( me ), GetName( checkingComp ) );
-         return false;
-      }                 catch ( Exception ex ) { return Error( ex ); } }
-
-      public static void Cleanup_CheckCompDependenciesAfterLoad ( MechComponentDef __instance ) {
-         if ( checkingComp == __instance ) checkingComp = null;
       }
 
       // ============ Safety System: Kill Switch and Logging ============
 
-      private static bool KillManagerPatch ( DataManager me, Exception err ) { try {
+      private static bool KillManagerPatch ( Exception err ) { try {
          Error( err );
-         Info( "Trying to hand resource loading over and suicide due to exception." );
-         List<DataManager.DataManagerLoadRequest> backgroundRequests = (List<DataManager.DataManagerLoadRequest>)
-            dmType.GetField( "backgroundRequests", NonPublic | Instance ).GetValue( me );
-         List<DataManager.DataManagerLoadRequest> foregroundRequests = (List<DataManager.DataManagerLoadRequest>)
-            dmType.GetField( "foregroundRequests", NonPublic | Instance ).GetValue( me );
-         if ( backgroundRequests == null || foregroundRequests == null )
-            throw new NullReferenceException( "Requests not found; handover aborted." );
+         Info( "Suicide due to exception." );
          UnpatchManager = true;
-         backgroundRequests.AddRange( background.Values );
-         background.Clear();
-         foregroundRequests.AddRange( foreground.Values );
-         Override_Clear( manager );
-         Info( "Handover completed. Good luck, commander." );
          return true;
       } catch ( Exception ex ) {
          return Error( ex );
       } }
-#pragma warning restore CS0162 // Enable warning of unreachable code
 
       internal static Logger ModLog = BattleMod.BT_LOG;
 

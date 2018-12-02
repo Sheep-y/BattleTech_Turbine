@@ -12,7 +12,6 @@ using System.Threading;
 
 namespace Sheepy.BattleTechMod.Turbine {
    using static Mod;
-   using static System.Reflection.BindingFlags;
 
    public class DataProcess : BattleModModule {
 

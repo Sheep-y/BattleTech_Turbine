@@ -24,32 +24,33 @@ namespace Sheepy.BattleTechMod.Turbine {
          Verbo( "Some simple filters and safety shield first." );
          // A pretty safe filter that disables invalid or immediately duplicating complete messages.
          if ( FilterNullAndRepeatedMessage )
-            Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, "Skip_DuplicateRequestCompleteMessage" );
+            Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, nameof( Skip_DuplicateRequestCompleteMessage ) );
          // Fix VFXNames.AllNames NPE
          if ( CacheVFXNames )
-            Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
+            Patch( typeof( VFXNamesDef ), "get_AllNames", nameof( Override_VFX_get_AllNames ), nameof( Cache_VFX_get_AllNames ) );
          if ( CacheCombatConst ) {
             // CombatGameConstants can be loaded and reloaded many times.  Cache it for reuse and fix an NPE.
-            Patch( typeof( CombatGameConstants ), "LoadFromManifest", "Override_CombatGameConstants_LoadFromManifest", null );
-            Patch( typeof( CombatGameConstants ), "OnDataLoaded", "Save_CombatGameConstants_Data", null );
+            Patch( typeof( CombatGameConstants ), "LoadFromManifest", nameof( Override_CombatGameConstants_LoadFromManifest ), null );
+            Patch( typeof( CombatGameConstants ), "OnDataLoaded", nameof( Save_CombatGameConstants_Data ), null );
          }
       }
 
-      private static string lastMessage;
+      private static BattleTechResourceType lastResourceType;
+      private static string lastIdentifier;
 
       public static void Skip_DuplicateRequestCompleteMessage ( DataManagerRequestCompleteMessage __instance ) {
          if ( String.IsNullOrEmpty( __instance.ResourceId ) ) {
             __instance.hasBeenPublished = true; // Skip publishing empty id
             return;
          }
-         string key = GetKey( __instance.ResourceType, __instance.ResourceId );
-         if ( lastMessage == key ) {
-            if ( DebugLog ) Trace( "Skipping successive DataManagerRequestCompleteMessage " + key );
+         if ( lastIdentifier == __instance.ResourceId && lastResourceType == __instance.ResourceType ) {
+            if ( DebugLog ) Verbo( "Skipping successive DataManagerRequestCompleteMessage {0} {1}", __instance.ResourceType, __instance.ResourceId );
             __instance.hasBeenPublished = true;
-         }  else
-            lastMessage = key;
+         } else {
+            lastIdentifier = __instance.ResourceId;
+            lastResourceType = __instance.ResourceType;
+         }
       }
-
       
       public static byte[] CombatConstantJSON;
       private static MethodInfo LoadMoraleResources, LoadMaintenanceResources;
