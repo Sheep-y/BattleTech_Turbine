@@ -18,7 +18,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static bool UnpatchManager = true;
 
       // Maintain a separate loading queue from task queue.
-      private const bool LoadingQueue = true;
+      private const bool LoadingQueue = false;
 
       // Don't timeout my load!  Set to false!
       private const bool EnableTimeout = false;
@@ -27,7 +27,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       private const bool EnableLoadCheck = false;
 
       // Hack MechDef/MechComponentDef dependency checking?
-      private const bool OverrideMechDefDependencyCheck = true;
+      private const bool OverrideMechDefDependencyCheck = false;
       private const bool OverrideMechCompDependencyCheck = false;
 
       // Performance hit varies by machine spec.
@@ -61,20 +61,22 @@ namespace Sheepy.BattleTechMod.Turbine {
          CreateByResourceType = dmType.GetMethod( "CreateByResourceType", NonPublic | Instance );
          ThrowAnyNull<object>( "DataManager field #{0}/2 not found.", prewarmRequests, CreateByResourceType );
          logger = HBS.Logging.Logger.GetLogger( "Data.DataManager" );
-         Patch( dmType.GetConstructors()[0], "DataManager_ctor", null );
-         Patch( dmType, "Clear", "Override_Clear", null );
-         Patch( dmType, "CheckBackgroundRequestsComplete", "Override_CheckRequestsComplete", null );
-         Patch( dmType, "CheckRequestsComplete", "Override_CheckRequestsComplete", null );
-         Patch( dmType, "GraduateBackgroundRequest", "Override_GraduateBackgroundRequest", null );
-         Patch( dmType, "NotifyFileLoaded", "Override_NotifyFileLoaded", null );
-         Patch( dmType, "NotifyFileLoadedAsync", "Override_NotifyFileLoadedAsync", null );
-         Patch( dmType, "NotifyFileLoadFailed", "Override_NotifyFileLoadFailed", null );
-         Patch( dmType, "ProcessAsyncRequests", "Override_ProcessAsyncRequests", null );
-         Patch( dmType, "ProcessRequests", "Override_ProcessRequests", null );
-         Patch( dmType, "RequestResourceAsync_Internal", "Override_RequestResourceAsync_Internal", null );
-         Patch( dmType, "RequestResource_Internal", "Override_RequestResource_Internal", null );
-         Patch( dmType, "SetLoadRequestWeights", "Override_SetLoadRequestWeights", null );
-         Patch( dmType, "UpdateRequestsTimeout", "Override_UpdateRequestsTimeout", null );
+         Patch( dmType.GetConstructors()[0], nameof( DataManager_ctor ), null );
+         Patch( dmType, "get_IsLoadingForeground", nameof( Override_IsLoadingForeground ), null );
+         Patch( dmType, "get_IsLoadingBackground", nameof( Override_IsLoadingBackground ), null );
+         Patch( dmType, "Clear", nameof( Override_Clear ), null );
+         Patch( dmType, "CheckBackgroundRequestsComplete", nameof( Override_CheckRequestsComplete ), null );
+         Patch( dmType, "CheckRequestsComplete", nameof( Override_CheckRequestsComplete ), null );
+         Patch( dmType, "GraduateBackgroundRequest", nameof( Override_GraduateBackgroundRequest ), null );
+         Patch( dmType, "NotifyFileLoaded", nameof( Override_NotifyFileLoaded ), null );
+         Patch( dmType, "NotifyFileLoadedAsync", nameof( Override_NotifyFileLoadedAsync ), null );
+         Patch( dmType, "NotifyFileLoadFailed", nameof( Override_NotifyFileLoadFailed ), null );
+         Patch( dmType, "ProcessAsyncRequests", nameof( Override_ProcessAsyncRequests ), null );
+         Patch( dmType, "ProcessRequests", nameof( Override_ProcessRequests ), null );
+         Patch( dmType, "RequestResourceAsync_Internal", nameof( Override_RequestResourceAsync_Internal ), null );
+         Patch( dmType, "RequestResource_Internal", nameof( Override_RequestResource_Internal ), null );
+         Patch( dmType, "SetLoadRequestWeights", nameof( Override_SetLoadRequestWeights ), null );
+         Patch( dmType, "UpdateRequestsTimeout", nameof( Override_UpdateRequestsTimeout ), null );
          foreground = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          background = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          if ( LoadingQueue )
@@ -82,13 +84,13 @@ namespace Sheepy.BattleTechMod.Turbine {
          depender = new Dictionary<object, HashSet<string>>();
          dependee = new Dictionary<string, HashSet<object>>();
          if ( OverrideMechDefDependencyCheck ) {
-            Patch( typeof( MechDef ), "CheckDependenciesAfterLoad", "Skip_CheckMechDependenciesAfterLoad", "Cleanup_CheckMechDependenciesAfterLoad" );
-            Patch( typeof( MechDef ), "RequestDependencies", "StartLogMechDefDependencies", "StopLogMechDefDependencies" );
+            Patch( typeof( MechDef ), "CheckDependenciesAfterLoad", nameof( Skip_CheckMechDependenciesAfterLoad ), nameof( Cleanup_CheckMechDependenciesAfterLoad ) );
+            Patch( typeof( MechDef ), "RequestDependencies", nameof( StartLogMechDefDependencies ), nameof( StopLogMechDefDependencies ) );
          }
          if ( OverrideMechCompDependencyCheck ) {
             LoadedComp = new HashSet<MechComponentDef>();
-            Patch( typeof( MechComponentDef ), "DependenciesLoaded", null, "Record_CompDependenciesLoaded" );
-            Patch( typeof( MechComponentDef ), "CheckDependenciesAfterLoad", "Skip_CheckCompDependenciesAfterLoad", "Cleanup_CheckCompDependenciesAfterLoad" );
+            Patch( typeof( MechComponentDef ), "DependenciesLoaded", null, nameof( Record_CompDependenciesLoaded ) );
+            Patch( typeof( MechComponentDef ), "CheckDependenciesAfterLoad", nameof( Skip_CheckCompDependenciesAfterLoad ), nameof( Cleanup_CheckCompDependenciesAfterLoad ) );
          }
          UnpatchManager = false;
          Info( "Turbine initialised" );
@@ -135,8 +137,19 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( DebugLog ) Info( "DataManager created." );
       }
 
-      private static bool IsLoadingBackground () {
-         return background.IsNullOrEmpty();
+      private static bool IsLoadingForeground () { return background.IsNullOrEmpty(); }
+      private static bool IsLoadingBackground () { return background.IsNullOrEmpty(); }
+
+      public static bool Override_IsLoadingForeground ( ref bool __result ) {
+         if ( UnpatchManager ) return true;
+         __result = IsLoadingForeground();
+         return false;
+      }
+
+      public static bool Override_IsLoadingBackground ( ref bool __result ) {
+         if ( UnpatchManager ) return true;
+         __result = IsLoadingBackground();
+         return false;
       }
 
       public static void Override_Clear ( DataManager __instance ) {
