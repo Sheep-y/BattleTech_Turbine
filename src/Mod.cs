@@ -193,15 +193,15 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       private static bool GraduateBackgroundRequest ( DataManager me, BattleTechResourceType resourceType, string id ) {
          string key = GetKey( resourceType, id );
-         if ( ! background.TryGetValue( key, out DataManager.DataManagerLoadRequest dataManagerLoadRequest ) )
+         if ( ! background.TryGetValue( key, out DataManager.DataManagerLoadRequest request ) )
             return false;
-         if ( DebugLog ) Info( "Graduating {0} ({1}) from background to foreground.", GetKey( dataManagerLoadRequest ), dataManagerLoadRequest.GetType() );
-         dataManagerLoadRequest.SetAsync( false );
-         dataManagerLoadRequest.ResetRequestState();
+         if ( DebugLog ) Info( "Graduating {0} ({1}) from background to foreground.", GetKey( request ), request.GetType() );
+         request.SetAsync( false );
+         request.ResetRequestState();
          background.Remove( key );
-         foreground.Add( key, dataManagerLoadRequest );
-         if ( LoadingQueue && ! dataManagerLoadRequest.IsComplete() )
-            foregroundLoading.Add( dataManagerLoadRequest );
+         foreground.Add( key, request );
+         if ( LoadingQueue && ! request.IsComplete() )
+            foregroundLoading.Add( request );
          bool wasLoadingAsync = IsLoadingBackground();
          bool nowLoadingAsync = ! CheckAsyncRequestsComplete();
          if ( nowLoadingAsync != wasLoadingAsync && wasLoadingAsync ) {
@@ -399,29 +399,29 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( UnpatchManager || string.IsNullOrEmpty( identifier ) ) return false;
          DataManager me = __instance;
          string key = GetKey( resourceType, identifier );
-         background.TryGetValue( key, out DataManager.DataManagerLoadRequest dataManagerLoadRequest );
-         if ( dataManagerLoadRequest != null ) {
-            if ( dataManagerLoadRequest.State == DataManager.DataManagerLoadRequest.RequestState.Complete ) {
-               if ( !dataManagerLoadRequest.DependenciesLoaded( ___backgroundRequestsCurrentAllowedWeight ) ) {
-                  dataManagerLoadRequest.ResetRequestState();
+         background.TryGetValue( key, out DataManager.DataManagerLoadRequest request );
+         if ( request != null ) {
+            if ( request.State == DataManager.DataManagerLoadRequest.RequestState.Complete ) {
+               if ( !request.DependenciesLoaded( ___backgroundRequestsCurrentAllowedWeight ) ) {
+                  request.ResetRequestState();
                } else {
-                  dataManagerLoadRequest.NotifyLoadComplete();
+                  request.NotifyLoadComplete();
                }
             } else {
-               if ( DebugLog ) Warn( "Cannot move {0} to top of background queue.", GetKey( dataManagerLoadRequest ) );
+               if ( DebugLog ) Warn( "Cannot move {0} to top of background queue.", GetKey( request ) );
                // Move to top of queue. Not supported by HashTable.
-               //backgroundRequest.Remove( dataManagerLoadRequest );
-               //backgroundRequest.Insert( 0, dataManagerLoadRequest );
+               //backgroundRequest.Remove( request );
+               //backgroundRequest.Insert( 0, request );
             }
             return false;
          }
          bool isForeground = foreground.ContainsKey( key );
          bool isTemplate = identifier.ToLowerInvariant().Contains("template");
          if ( ! isForeground && ! isTemplate ) {
-            dataManagerLoadRequest = (DataManager.DataManagerLoadRequest) CreateByResourceType.Invoke( me, new object[]{ resourceType, identifier, prewarm } );
-            dataManagerLoadRequest.SetAsync( true );
-            if ( DebugLog ) Info( "Queued Async: {0} ({1}) ", key, dataManagerLoadRequest.GetType() );
-            background.Add( key, dataManagerLoadRequest );
+            request = (DataManager.DataManagerLoadRequest) CreateByResourceType.Invoke( me, new object[]{ resourceType, identifier, prewarm } );
+            request.SetAsync( true );
+            if ( DebugLog ) Info( "Queued Async: {0} ({1}) ", key, request.GetType() );
+            background.Add( key, request );
          }
          return false;
       }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
@@ -438,29 +438,29 @@ namespace Sheepy.BattleTechMod.Turbine {
          DataManager me = __instance;
          string key = GetKey( resourceType, identifier );
          if ( monitoringMech != null ) LogDependee( monitoringMech, key );
-         foreground.TryGetValue( key, out DataManager.DataManagerLoadRequest dataManagerLoadRequest );
-         if ( dataManagerLoadRequest != null ) {
-            if ( dataManagerLoadRequest.State != DataManager.DataManagerLoadRequest.RequestState.Complete || !dataManagerLoadRequest.DependenciesLoaded( dataManagerLoadRequest.RequestWeight.RequestWeight ) ) {
+         foreground.TryGetValue( key, out DataManager.DataManagerLoadRequest request );
+         if ( request != null ) {
+            if ( request.State != DataManager.DataManagerLoadRequest.RequestState.Complete || !request.DependenciesLoaded( request.RequestWeight.RequestWeight ) ) {
                if ( allowRequestStacking )
-                  dataManagerLoadRequest.IncrementCacheCount();
+                  request.IncrementCacheCount();
             } else
-               NotifyFileLoaded( me, dataManagerLoadRequest );
+               NotifyFileLoaded( me, request );
             return false;
          }
          bool movedToForeground = GraduateBackgroundRequest( me, resourceType, identifier);
          bool skipLoad = false;
          bool isTemplate = identifier.ToLowerInvariant().Contains("template");
          if ( !movedToForeground && !skipLoad && !isTemplate ) {
-            dataManagerLoadRequest = (DataManager.DataManagerLoadRequest) CreateByResourceType.Invoke( me, new object[]{ resourceType, identifier, prewarm } );
+            request = (DataManager.DataManagerLoadRequest) CreateByResourceType.Invoke( me, new object[]{ resourceType, identifier, prewarm } );
             if ( foreground.Count <= 0 ) {
                Info( "Starting new queue" );
                stopwatch.Start();
             }
-            if ( DebugLog ) Verbo( "Queued: {0} ({1})", key, dataManagerLoadRequest.GetType() );
+            if ( DebugLog ) Verbo( "Queued: {0} ({1})", key, request.GetType() );
             //if ( key == "19_CombatGameConstants" ) Info( Logger.Stacktrace );
-            foreground.Add( key, dataManagerLoadRequest );
-            if ( LoadingQueue && ! dataManagerLoadRequest.IsComplete() )
-               foregroundLoading.Add( dataManagerLoadRequest );
+            foreground.Add( key, request );
+            if ( LoadingQueue && ! request.IsComplete() )
+               foregroundLoading.Add( request );
          }
          return false;
       }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
@@ -481,12 +481,12 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( DebugLog ) Info( "Set LoadRequestWeights {0}/{1} on {2}/{3} loading foreground/background requests.", foregroundRequestWeight, backgroundRequestWeight, foregroundLoading.Count, background.Count );
          ___foregroundRequestsCurrentAllowedWeight = foregroundRequestWeight;
          ___backgroundRequestsCurrentAllowedWeight = backgroundRequestWeight;
-         foreach ( DataManager.DataManagerLoadRequest dataManagerLoadRequest in queue )
-            if ( foregroundRequestWeight > dataManagerLoadRequest.RequestWeight.AllowedWeight )
-               dataManagerLoadRequest.RequestWeight.SetAllowedWeight( foregroundRequestWeight );
-         foreach ( DataManager.DataManagerLoadRequest dataManagerLoadRequest in background.Values )
-            if ( backgroundRequestWeight > dataManagerLoadRequest.RequestWeight.AllowedWeight )
-               dataManagerLoadRequest.RequestWeight.SetAllowedWeight( backgroundRequestWeight );
+         foreach ( DataManager.DataManagerLoadRequest request in queue )
+            if ( foregroundRequestWeight > request.RequestWeight.AllowedWeight )
+               request.RequestWeight.SetAllowedWeight( foregroundRequestWeight );
+         foreach ( DataManager.DataManagerLoadRequest request in background.Values )
+            if ( backgroundRequestWeight > request.RequestWeight.AllowedWeight )
+               request.RequestWeight.SetAllowedWeight( backgroundRequestWeight );
          return false;
       }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
 
@@ -500,9 +500,9 @@ namespace Sheepy.BattleTechMod.Turbine {
                DataManager.DataManagerLoadRequest[] list = queue.Where( IsProcessing ).ToArray();
                currentTimeout += deltaTime;
                if ( currentTimeout > list.Count() * 0.2f ) {
-                  foreach ( DataManager.DataManagerLoadRequest dataManagerLoadRequest in list ) {
-                     logger.LogWarning( string.Format( "DataManager Request for {0} has taken too long. Cancelling request. Your load will probably fail", dataManagerLoadRequest.ResourceId ) );
-                     dataManagerLoadRequest.NotifyLoadFailed();
+                  foreach ( DataManager.DataManagerLoadRequest request in list ) {
+                     logger.LogWarning( string.Format( "DataManager Request for {0} has taken too long. Cancelling request. Your load will probably fail", request.ResourceId ) );
+                     request.NotifyLoadFailed();
                   }
                   currentTimeout = -1f;
                }
@@ -512,10 +512,10 @@ namespace Sheepy.BattleTechMod.Turbine {
             currentAsyncTimeout += deltaTime;
             if ( currentAsyncTimeout > 20f ) {
                if ( DebugLog ) Warn( "Background request timeout." );
-               DataManager.DataManagerLoadRequest dataManagerLoadRequest = background.Values.First( IsProcessing );
-               if ( dataManagerLoadRequest != null ) {
-                  logger.LogWarning( string.Format( "DataManager Async Request for {0} has taken too long. Cancelling request. Your load will probably fail", dataManagerLoadRequest.ResourceId ) );
-                  dataManagerLoadRequest.NotifyLoadFailed();
+               DataManager.DataManagerLoadRequest request = background.Values.First( IsProcessing );
+               if ( request != null ) {
+                  logger.LogWarning( string.Format( "DataManager Async Request for {0} has taken too long. Cancelling request. Your load will probably fail", request.ResourceId ) );
+                  request.NotifyLoadFailed();
                }
                currentAsyncTimeout = -1f;
             }
