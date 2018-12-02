@@ -510,6 +510,12 @@ namespace Sheepy.BattleTechMod {
          return false;
       }
 
+      public static void ThrowAnyNull<T> ( string message, params T[] objects ) {
+         for ( int i = objects.Length - 1 ; i >= 0 ; i-- )
+            if ( objects[ i ] == null )
+               throw new NullReferenceException( string.Format( message, i ) );
+      }
+
       public static T ValueCheck<T> ( ref T value, T fallback = default, Func<T,bool> validate = null ) {
          if ( value == null ) value = fallback;
          else if ( validate != null && ! validate( value ) ) value = fallback;

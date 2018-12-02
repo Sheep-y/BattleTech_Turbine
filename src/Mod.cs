@@ -58,15 +58,12 @@ namespace Sheepy.BattleTechMod.Turbine {
          Verbo( "Ok let's try to install real Turbine." );
          dmType = typeof( DataManager );
          prewarmRequests = dmType.GetField( "prewarmRequests", NonPublic | Instance );
-         isLoadingAsync = dmType.GetField( "isLoadingAsync", NonPublic | Instance );
          CreateByResourceType = dmType.GetMethod( "CreateByResourceType", NonPublic | Instance );
-         SaveCache = dmType.GetMethod( "SaveCache", NonPublic | Instance );
-         if ( prewarmRequests == null || isLoadingAsync == null || CreateByResourceType == null || SaveCache == null )
-            throw new NullReferenceException( "One or more DataManager fields not found with reflection." );
+         ThrowAnyNull<object>( "DataManager field #{0}/2 not found.", prewarmRequests, CreateByResourceType );
          logger = HBS.Logging.Logger.GetLogger( "Data.DataManager" );
          Patch( dmType.GetConstructors()[0], "DataManager_ctor", null );
          Patch( dmType, "Clear", "Override_Clear", null );
-         Patch( dmType, "CheckAsyncRequestsComplete", "Override_CheckRequestsComplete", null );
+         Patch( dmType, "CheckBackgroundRequestsComplete", "Override_CheckRequestsComplete", null );
          Patch( dmType, "CheckRequestsComplete", "Override_CheckRequestsComplete", null );
          Patch( dmType, "GraduateBackgroundRequest", "Override_GraduateBackgroundRequest", null );
          Patch( dmType, "NotifyFileLoaded", "Override_NotifyFileLoaded", null );
@@ -118,8 +115,8 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static DataManager manager;
       private static MessageCenter center;
       private static HBS.Logging.ILog logger;
-      private static FieldInfo prewarmRequests, isLoadingAsync;
-      private static MethodInfo CreateByResourceType, SaveCache;
+      private static FieldInfo prewarmRequests;
+      private static MethodInfo CreateByResourceType;
 
       // Track queue time
       private static Stopwatch stopwatch;
@@ -136,6 +133,10 @@ namespace Sheepy.BattleTechMod.Turbine {
       public static void DataManager_ctor ( MessageCenter messageCenter ) {
          center = messageCenter;
          if ( DebugLog ) Info( "DataManager created." );
+      }
+
+      private static bool IsLoadingBackground () {
+         return background.IsNullOrEmpty();
       }
 
       public static void Override_Clear ( DataManager __instance ) {
@@ -188,26 +189,22 @@ namespace Sheepy.BattleTechMod.Turbine {
          foreground.Add( key, dataManagerLoadRequest );
          if ( LoadingQueue && ! dataManagerLoadRequest.IsComplete() )
             foregroundLoading.Add( dataManagerLoadRequest );
-         bool wasLoadingAsync = (bool) isLoadingAsync.GetValue( me );
+         bool wasLoadingAsync = IsLoadingBackground();
          bool nowLoadingAsync = ! CheckAsyncRequestsComplete();
-         if ( nowLoadingAsync != wasLoadingAsync ) {
-            isLoadingAsync.SetValue( me, nowLoadingAsync );
-            if ( wasLoadingAsync ) {
-               SaveCache.Invoke( me, null );
-               background.Clear();
-               center.PublishMessage( new DataManagerAsyncLoadCompleteMessage() );
-            }
+         if ( nowLoadingAsync != wasLoadingAsync && wasLoadingAsync ) {
+            background.Clear();
+            center.PublishMessage( new DataManagerAsyncLoadCompleteMessage() );
          }
          return true;
       }
 
-      public static bool Override_NotifyFileLoaded ( DataManager __instance, DataManager.DataManagerLoadRequest request, ref bool ___isLoading ) { try {
+      public static bool Override_NotifyFileLoaded ( DataManager __instance, DataManager.DataManagerLoadRequest request ) { try {
          if ( UnpatchManager ) return true;
-         NotifyFileLoaded( __instance, request, ref ___isLoading );
+         NotifyFileLoaded( __instance, request );
          return false;
       }                 catch ( Exception ex ) { return KillManagerPatch( __instance, ex ); } }
 
-      private static void NotifyFileLoaded ( DataManager me, DataManager.DataManagerLoadRequest request, ref bool isLoading ) {
+      private static void NotifyFileLoaded ( DataManager me, DataManager.DataManagerLoadRequest request ) {
          if ( request.Prewarm != null ) {
             if ( DebugLog ) Trace( "Notified Prewarm: {0}", GetKey( request ) );
             List<PrewarmRequest> pre = (List<PrewarmRequest>) prewarmRequests.GetValue( me );
@@ -224,8 +221,6 @@ namespace Sheepy.BattleTechMod.Turbine {
                stopwatch.Reset();
             } else if ( DebugLog )
                Verbo( "Empty foreground queue cleared by {0}.", GetKey( request ) );
-            isLoading = false;
-            SaveCache.Invoke( me, null );
             foreground.Clear();
             if ( LoadingQueue )
                foregroundLoading.Clear();
@@ -251,19 +246,17 @@ namespace Sheepy.BattleTechMod.Turbine {
          CheckMechDefDependencies( request );
          if ( CheckAsyncRequestsComplete() ) {
             if ( DebugLog ) Verbo( "Background queue cleared by {0}.", GetKey( request ) );
-            isLoadingAsync.SetValue( me, false );
-            SaveCache.Invoke( me, null );
             background.Clear();
             center.PublishMessage( new DataManagerAsyncLoadCompleteMessage() );
          }
       }
 
-      public static bool Override_NotifyFileLoadFailed ( DataManager __instance, DataManager.DataManagerLoadRequest request, ref bool ___isLoading ) { try {
+      public static bool Override_NotifyFileLoadFailed ( DataManager __instance, DataManager.DataManagerLoadRequest request ) { try {
          if ( UnpatchManager ) return true;
          string key = GetKey( request );
          if ( DebugLog ) Trace ( "Notified Failed: {0}", key );
          if ( foreground.Remove( key ) )
-            NotifyFileLoaded( __instance, request, ref ___isLoading );
+            NotifyFileLoaded( __instance, request );
          else if ( background.Remove( key ) )
             NotifyFileLoadedAsync( __instance, request );
          return false;
@@ -287,7 +280,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
       }
 
-      public static bool Override_ProcessRequests ( DataManager __instance, uint ___foregroundRequestsCurrentAllowedWeight, ref bool ___isLoading ) { try {
+      public static bool Override_ProcessRequests ( DataManager __instance, uint ___foregroundRequestsCurrentAllowedWeight ) { try {
          if ( UnpatchManager ) return true;
          if ( queue.Count <= 0 ) return false; // Early abort before reflection
          DataManager me = __instance;
@@ -317,7 +310,6 @@ namespace Sheepy.BattleTechMod.Turbine {
                            } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
                               heavyLoad++;
                         }
-                        ___isLoading = true;
                         if ( EnableTimeout ) me.ResetRequestsTimeout();
                      }
                   } else
@@ -339,7 +331,6 @@ namespace Sheepy.BattleTechMod.Turbine {
                         } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
                            heavyLoad++;
                      }
-                     ___isLoading = true;
                      if ( DebugLog ) Verbo( "Loading {0}.", GetKey( request ) );
                      request.Load();
                      if ( EnableTimeout ) me.ResetRequestsTimeout();
@@ -371,7 +362,6 @@ namespace Sheepy.BattleTechMod.Turbine {
                            if ( dependencyLoader.DependenciesLoaded( request.RequestWeight.AllowedWeight ) )
                               request.NotifyLoadComplete();
                         }, request );
-                        isLoadingAsync.SetValue( me, true );
                         if ( EnableTimeout ) me.ResetAsyncRequestsTimeout();
                      }
                   } else
@@ -382,7 +372,6 @@ namespace Sheepy.BattleTechMod.Turbine {
                } else if ( !request.RequestWeight.RequestAllowed ) {
                   request.NotifyLoadComplete();
                } else {
-                  isLoadingAsync.SetValue( me, true );
                   if ( DebugLog ) Verbo( "Loading Async {0}.", GetKey( request ) );
                   request.Load();
                   if ( EnableTimeout ) me.ResetAsyncRequestsTimeout();
@@ -427,7 +416,7 @@ namespace Sheepy.BattleTechMod.Turbine {
       private static BattleTechResourceType lastResourceType;
       private static string lastIdentifier;
 
-      public static bool Override_RequestResource_Internal ( DataManager __instance, BattleTechResourceType resourceType, string identifier, PrewarmRequest prewarm, bool allowRequestStacking, ref bool ___isLoading ) { try {
+      public static bool Override_RequestResource_Internal ( DataManager __instance, BattleTechResourceType resourceType, string identifier, PrewarmRequest prewarm, bool allowRequestStacking ) { try {
          if ( UnpatchManager || string.IsNullOrEmpty( identifier ) ) return false;
          // Quickly skip duplicate request
          if ( resourceType == lastResourceType && identifier == lastIdentifier ) return false;
@@ -442,7 +431,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                if ( allowRequestStacking )
                   dataManagerLoadRequest.IncrementCacheCount();
             } else
-               NotifyFileLoaded( me, dataManagerLoadRequest, ref ___isLoading );
+               NotifyFileLoaded( me, dataManagerLoadRequest );
             return false;
          }
          bool movedToForeground = GraduateBackgroundRequest( me, resourceType, identifier);
