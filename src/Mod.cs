@@ -167,15 +167,41 @@ namespace Sheepy.BattleTechMod.Turbine {
          __result = CheckAsyncRequestsComplete();
          return false;
       }
-      private static bool CheckRequestsComplete () {
-         bool done = foregroundLoading.All( IsComplete );
-         if ( DebugLog && done && foregroundLoading.Count > 0 ) {
-            Warn( $"Found {foregroundLoading.Count} unnotified completed requests in loading queue:" );
-            foreach ( var request in foregroundLoading ) Info( "   {0} ({1})", GetKey( request ), request.GetType() );
+
+      private static void CheckRequestsComplete ( ICollection<DataManager.DataManagerLoadRequest> queue, Action<DataManager.DataManagerLoadRequest> unqueue ) {
+         bool allProcessing = true;
+         List<DataManager.DataManagerLoadRequest> complete = null;
+         foreach ( var request in queue ) {
+            if ( request.IsComplete() ) {
+               if ( complete == null ) complete = new List<DataManager.DataManagerLoadRequest>();
+               complete.Add( request );
+            } else if ( allProcessing && request.State != DataManager.DataManagerLoadRequest.RequestState.Processing )
+               allProcessing = false;
          }
-         return done;
+         if ( complete != null ) {
+            foreach ( var request in complete ) unqueue( request );
+            foreach ( var request in complete ) request.SendLoadCompleteMessage();
+         }
+         if ( allProcessing )
+            foreach ( var request in complete ) {
+               DataManager.ILoadDependencies loadDependencies = request.TryGetDependencyLoader();
+               if ( loadDependencies != null && loadDependencies.DependenciesLoaded( request.RequestWeight.AllowedWeight ) ) {
+                  loadDependencies.CheckDependenciesAfterLoad( new DataManagerRequestCompleteMessage( BattleTechResourceType.MechDef, "dummy" ) );
+                  request.OnLoaded();
+               }
+            }
       }
-      private static bool CheckAsyncRequestsComplete () { return background.Values.All( IsComplete ); }
+
+      private static bool CheckRequestsComplete () {
+         CheckRequestsComplete( foregroundLoading, e => foregroundLoading.Remove( e ) );
+         return foreground.Count <= 0;
+      }
+
+      private static bool CheckAsyncRequestsComplete () {
+         CheckRequestsComplete( background.Values, e => background.Remove( GetKey( e ) ) );
+         return background.Count <= 0;
+      }
+
       private static bool IsComplete ( DataManager.DataManagerLoadRequest e ) { return e.IsComplete(); }
 
       public static bool Override_GraduateBackgroundRequest ( DataManager __instance, ref bool __result, BattleTechResourceType resourceType, string id ) { try {
@@ -189,15 +215,14 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( ! background.TryGetValue( key, out DataManager.DataManagerLoadRequest request ) )
             return false;
          if ( DebugLog ) Info( "Graduating {0} ({1}) from background to foreground.", GetKey( request ), request.GetType() );
+         bool wasLoadingAsync = IsLoadingBackground();
          request.SetAsync( false );
          request.ResetRequestState();
          background.Remove( key );
          foreground.Add( key, request );
          if ( ! request.IsComplete() )
             foregroundLoading.Add( request );
-         bool wasLoadingAsync = IsLoadingBackground();
-         bool nowLoadingAsync = ! CheckAsyncRequestsComplete();
-         if ( nowLoadingAsync != wasLoadingAsync && wasLoadingAsync ) {
+         if ( wasLoadingAsync != IsLoadingBackground() ) {
             background.Clear();
             center.PublishMessage( new DataManagerAsyncLoadCompleteMessage() );
          }
@@ -217,22 +242,6 @@ namespace Sheepy.BattleTechMod.Turbine {
             pre.Remove( request.Prewarm );
          }
          if ( DebugLog ) Trace( "Notified Done: {0}", GetKey( request ) );
-         CheckMechDefDependencies( request );
-         if ( request.IsComplete() )
-            foregroundLoading.Remove( request );
-         if ( CheckRequestsComplete() ) {
-            if ( foreground.Count > 0 ) {
-               stopwatch.Stop();
-               Info( "Foreground queue ({0}) cleared. {1:n0}ms this queue, {2:n0}ms total.", foreground.Count, stopwatch.ElapsedMilliseconds, totalLoadTime += stopwatch.ElapsedMilliseconds );
-               stopwatch.Reset();
-            } else if ( DebugLog )
-               Verbo( "Empty foreground queue cleared by {0}.", GetKey( request ) );
-            foreground.Clear();
-            foregroundLoading.Clear();
-            depender.Clear();
-            dependee.Clear();
-            center.PublishMessage( new DataManagerLoadCompleteMessage() );
-         }
       }
 
       public static bool Override_NotifyFileLoadedAsync ( DataManager __instance, DataManager.DataManagerLoadRequest request ) { try {
@@ -248,12 +257,6 @@ namespace Sheepy.BattleTechMod.Turbine {
             pre.Remove( request.Prewarm );
          }
          if ( DebugLog ) Trace( "Notified Done Async: " + GetKey( request ) );
-         CheckMechDefDependencies( request );
-         if ( CheckAsyncRequestsComplete() ) {
-            if ( DebugLog ) Verbo( "Background queue cleared by {0}.", GetKey( request ) );
-            background.Clear();
-            center.PublishMessage( new DataManagerAsyncLoadCompleteMessage() );
-         }
       }
 
       public static bool Override_NotifyFileLoadFailed ( DataManager __instance, DataManager.DataManagerLoadRequest request ) { try {
@@ -287,59 +290,45 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       public static bool Override_ProcessRequests ( DataManager __instance, uint ___foregroundRequestsCurrentAllowedWeight ) { try {
          if ( UnpatchManager ) return true;
-         if ( foregroundLoading.Count <= 0 ) return false; // Early abort before reflection
+         if ( foregroundLoading.Count <= 0 ) IsLoadingForeground(); // Triggers dependency checks
          DataManager me = __instance;
          int lightLoad = 0, heavyLoad = 0;
          if ( DebugLog ) Trace( "Processing {0} foreground requests", foregroundLoading.Count );
          foreach ( DataManager.DataManagerLoadRequest request in foregroundLoading.ToArray() ) {
             if ( EnableLoadCheck )
                if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
-                  break;
-            request.RequestWeight.SetAllowedWeight( ___foregroundRequestsCurrentAllowedWeight );
+                  return false;
             if ( request.State == DataManager.DataManagerLoadRequest.RequestState.Requested ) {
+               request.RequestWeight.SetAllowedWeight( ___foregroundRequestsCurrentAllowedWeight );
                if ( request.IsMemoryRequest )
                   me.RemoveObjectOfType( request.ResourceId, request.ResourceType );
-               if ( request.AlreadyLoaded ) {
-                  if ( ! request.DependenciesLoaded( ___foregroundRequestsCurrentAllowedWeight ) ) {
-                     DataManager.ILoadDependencies dependencyLoader = request.TryGetDependencyLoader();
-                     if ( dependencyLoader != null ) {
-                        request.RequestWeight.SetAllowedWeight( ___foregroundRequestsCurrentAllowedWeight );
-                        dependencyLoader.RequestDependencies( me, () => {
-                           if ( dependencyLoader.DependenciesLoaded( ___foregroundRequestsCurrentAllowedWeight ) )
-                              request.NotifyLoadComplete();
-                        }, request );
-                        if ( EnableLoadCheck ) {
-                           if ( request.RequestWeight.RequestWeight == 10u ) {
-                              if ( DataManager.MaxConcurrentLoadsLight > 0 )
-                                 lightLoad++;
-                           } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
-                              heavyLoad++;
-                        }
-                        if ( EnableTimeout ) me.ResetRequestsTimeout();
-                     }
-                  } else
-                     request.NotifyLoadComplete();
+               if ( EnableLoadCheck )
+                  if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
+                     return false;
+               if ( ! request.ManifestEntryValid ) {
+                  logger.LogError( string.Format( "LoadRequest for {0} of type {1} has an invalid manifest entry. Any requests for this object will fail.", request.ResourceId, request.ResourceType ) );
+                  request.NotifyLoadFailed();
+               } else if ( ! request.RequestWeight.RequestAllowed ) {
+                  request.NotifyLoadComplete();
                } else {
-                  if ( EnableLoadCheck )
-                     if ( lightLoad >= DataManager.MaxConcurrentLoadsLight && heavyLoad >= DataManager.MaxConcurrentLoadsHeavy )
-                        break;
-                  if ( ! request.ManifestEntryValid ) {
-                     logger.LogError( string.Format( "LoadRequest for {0} of type {1} has an invalid manifest entry. Any requests for this object will fail.", request.ResourceId, request.ResourceType ) );
-                     request.NotifyLoadFailed();
-                  } else if ( ! request.RequestWeight.RequestAllowed ) {
-                     request.NotifyLoadComplete();
-                  } else {
-                     if ( EnableLoadCheck ) {
-                        if ( request.RequestWeight.RequestWeight == 10u ) {
-                           if ( DataManager.MaxConcurrentLoadsLight > 0 )
-                              lightLoad++;
-                        } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
-                           heavyLoad++;
-                     }
-                     if ( DebugLog ) Verbo( "Loading {0}.", GetKey( request ) );
-                     request.Load();
-                     if ( EnableTimeout ) me.ResetRequestsTimeout();
+                  if ( EnableLoadCheck ) {
+                     if ( request.RequestWeight.RequestWeight == 10u ) {
+                        if ( DataManager.MaxConcurrentLoadsLight > 0 )
+                           lightLoad++;
+                     } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
+                        heavyLoad++;
                   }
+                  if ( DebugLog ) Verbo( "Loading {0}.", GetKey( request ) );
+                  request.Load();
+                  if ( EnableTimeout ) me.ResetRequestsTimeout();
+               }
+            } else if ( request.State == DataManager.DataManagerLoadRequest.RequestState.Processing ) {
+               if ( EnableLoadCheck ) {
+                  if ( request.RequestWeight.RequestWeight == 10u ) {
+                     if ( DataManager.MaxConcurrentLoadsLight > 0 )
+                        lightLoad++;
+                  } else if ( DataManager.MaxConcurrentLoadsHeavy > 0 )
+                     heavyLoad++;
                }
             }
          }
@@ -352,32 +341,18 @@ namespace Sheepy.BattleTechMod.Turbine {
          DataManager me = __instance;
          if ( DebugLog ) Trace( "Processing {0} background requests", background.Count );
          foreach ( DataManager.DataManagerLoadRequest request in background.Values ) {
-            request.RequestWeight.SetAllowedWeight( ___backgroundRequestsCurrentAllowedWeight );
             DataManager.DataManagerLoadRequest.RequestState state = request.State;
             if ( state == DataManager.DataManagerLoadRequest.RequestState.Processing ) return false;
             if ( state == DataManager.DataManagerLoadRequest.RequestState.RequestedAsync ) {
+               request.RequestWeight.SetAllowedWeight( ___backgroundRequestsCurrentAllowedWeight );
                if ( request.IsMemoryRequest )
                   me.RemoveObjectOfType( request.ResourceId, request.ResourceType );
-               if ( request.AlreadyLoaded ) {
-                  if ( !request.DependenciesLoaded( ___backgroundRequestsCurrentAllowedWeight ) ) {
-                     DataManager.ILoadDependencies dependencyLoader = request.TryGetDependencyLoader();
-                     if ( dependencyLoader != null ) {
-                        request.RequestWeight.SetAllowedWeight( ___backgroundRequestsCurrentAllowedWeight );
-                        dependencyLoader.RequestDependencies( me, () => {
-                           if ( dependencyLoader.DependenciesLoaded( request.RequestWeight.AllowedWeight ) )
-                              request.NotifyLoadComplete();
-                        }, request );
-                        if ( EnableTimeout ) me.ResetAsyncRequestsTimeout();
-                     }
-                  } else
-                     request.NotifyLoadComplete();
-               } else if ( !request.ManifestEntryValid ) {
+               if ( ! request.ManifestEntryValid ) {
                   logger.LogError( string.Format( "LoadRequest for {0} of type {1} has an invalid manifest entry. Any requests for this object will fail.", request.ResourceId, request.ResourceType ) );
                   request.NotifyLoadFailed();
-               } else if ( !request.RequestWeight.RequestAllowed ) {
+               } else if ( ! request.RequestWeight.RequestAllowed ) {
                   request.NotifyLoadComplete();
                } else {
-                  if ( DebugLog ) Verbo( "Loading Async {0}.", GetKey( request ) );
                   request.Load();
                   if ( EnableTimeout ) me.ResetAsyncRequestsTimeout();
                }
@@ -398,6 +373,7 @@ namespace Sheepy.BattleTechMod.Turbine {
                   request.ResetRequestState();
                } else {
                   request.NotifyLoadComplete();
+                  request.SendLoadCompleteMessage();
                }
             } else {
                if ( DebugLog ) Warn( "Cannot move {0} to top of background queue.", GetKey( request ) );
