@@ -30,9 +30,9 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       public override void ModStarts () {
          if ( StripJSON )
-            Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", NonPublic | Static, "Override_StripComments", null );
+            Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", "Override_StripComments", null );
          if ( MultiThreadHash )
-            Patch( typeof( DataManager ), "GetDataHash", Static, "MultiThreadDataHash", null );
+            Patch( typeof( DataManager ), "GetDataHash", "MultiThreadDataHash", null );
          if ( OptimiseCsvReadRow ) {
             csvField = new Regex( "((?<=\\\")(?>[^\\\"]*)(?=\\\"(,|$)+)|(?<=,|^)(?>[^,\\\"]*)(?=,|$))", RegexOptions.Multiline | RegexOptions.Compiled );
             Patch( typeof( CSVReader ), "ReadRow", new Type[]{}, "Override_CSVReader_ReadRow", null );
@@ -44,7 +44,7 @@ namespace Sheepy.BattleTechMod.Turbine {
          if ( BattleMod.FoundMod( "BattletechPerformanceFix.Control" ) ) {
             Type DontStripComments = AppDomain.CurrentDomain.GetAssemblies().Select( e => e.GetType( "BattletechPerformanceFix.DontStripComments" ) ).FirstOrDefault( e => e != null );
             if ( DontStripComments != null )
-               Patch( DontStripComments, "HBSStripCommentsMirror", Static, "Override_StripComments", null );
+               Patch( DontStripComments, "HBSStripCommentsMirror", "Override_StripComments", null );
          }
       }
 

@@ -66,18 +66,18 @@ namespace Sheepy.BattleTechMod.Turbine {
          logger = HBS.Logging.Logger.GetLogger( "Data.DataManager" );
          Patch( dmType.GetConstructors()[0], "DataManager_ctor", null );
          Patch( dmType, "Clear", "Override_Clear", null );
-         Patch( dmType, "CheckAsyncRequestsComplete", NonPublic, "Override_CheckRequestsComplete", null );
-         Patch( dmType, "CheckRequestsComplete", NonPublic, "Override_CheckRequestsComplete", null );
-         Patch( dmType, "GraduateBackgroundRequest", NonPublic, "Override_GraduateBackgroundRequest", null );
-         Patch( dmType, "NotifyFileLoaded", NonPublic, "Override_NotifyFileLoaded", null );
-         Patch( dmType, "NotifyFileLoadedAsync", NonPublic, "Override_NotifyFileLoadedAsync", null );
-         Patch( dmType, "NotifyFileLoadFailed", NonPublic, "Override_NotifyFileLoadFailed", null );
+         Patch( dmType, "CheckAsyncRequestsComplete", "Override_CheckRequestsComplete", null );
+         Patch( dmType, "CheckRequestsComplete", "Override_CheckRequestsComplete", null );
+         Patch( dmType, "GraduateBackgroundRequest", "Override_GraduateBackgroundRequest", null );
+         Patch( dmType, "NotifyFileLoaded", "Override_NotifyFileLoaded", null );
+         Patch( dmType, "NotifyFileLoadedAsync", "Override_NotifyFileLoadedAsync", null );
+         Patch( dmType, "NotifyFileLoadFailed", "Override_NotifyFileLoadFailed", null );
          Patch( dmType, "ProcessAsyncRequests", "Override_ProcessAsyncRequests", null );
          Patch( dmType, "ProcessRequests", "Override_ProcessRequests", null );
-         Patch( dmType, "RequestResourceAsync_Internal", NonPublic, "Override_RequestResourceAsync_Internal", null );
-         Patch( dmType, "RequestResource_Internal", NonPublic, "Override_RequestResource_Internal", null );
+         Patch( dmType, "RequestResourceAsync_Internal", "Override_RequestResourceAsync_Internal", null );
+         Patch( dmType, "RequestResource_Internal", "Override_RequestResource_Internal", null );
          Patch( dmType, "SetLoadRequestWeights", "Override_SetLoadRequestWeights", null );
-         Patch( dmType, "UpdateRequestsTimeout", NonPublic, "Override_UpdateRequestsTimeout", null );
+         Patch( dmType, "UpdateRequestsTimeout", "Override_UpdateRequestsTimeout", null );
          foreground = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          background = new Dictionary<string, DataManager.DataManagerLoadRequest>(4096);
          if ( LoadingQueue )
@@ -103,7 +103,7 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       public override void GameStartsOnce () {
          if ( UnpatchManager ) return;
-         Info( "Mods found: " + Join( ", ", BattleMod.GetModList() ) );
+         Info( "Mods found: " + BattleMod.GetModList().Concat() );
       }
 
       // ============ Compressor & Turbine - the main rewrite ============
