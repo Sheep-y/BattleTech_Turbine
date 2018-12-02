@@ -7,9 +7,10 @@ using System.Threading;
 
 namespace Sheepy.Logging {
    public class Logger : IDisposable {
-      public Logger ( string file ) : this( file, 1000 ) { }
-      public Logger ( string file, int writeDelay ) {
+      public Logger ( string file, string blockDelete ) : this( file, 1000, blockDelete ) { }
+      public Logger ( string file, int writeDelay = 1000, string blockDelete = null ) {
          if ( string.IsNullOrEmpty( file ) ) throw new NullReferenceException();
+         BlockDeleteReason = blockDelete;
          LogFile = file.Trim();
          if ( writeDelay < 0 ) return;
          this.writeDelay = writeDelay;
@@ -20,6 +21,8 @@ namespace Sheepy.Logging {
 
       // ============ Self Prop ============
 
+      private readonly string BlockDeleteReason; // Non-null to block delete
+
       protected Func<SourceLevels,string> _LevelText = ( level ) => { //return level.ToString() + ": ";
          if ( level <= SourceLevels.Critical ) return "CRIT "; if ( level <= SourceLevels.Error       ) return "ERR  ";
          if ( level <= SourceLevels.Warning  ) return "WARN "; if ( level <= SourceLevels.Information ) return "INFO ";
@@ -28,6 +31,7 @@ namespace Sheepy.Logging {
       protected string _TimeFormat = "hh:mm:ss.ffff ", _Prefix = null, _Postfix = null;
       protected List<Func<LogEntry,bool>> _Filters = null;
       protected bool _IgnoreDuplicateExceptions = true;
+      protected Action<Exception> _OnError = ( ex ) => Console.Error.WriteLine( ex );
 
       public class LogEntry { public DateTime time; public SourceLevels level; public object message; public object[] args; }
 
@@ -43,33 +47,43 @@ namespace Sheepy.Logging {
       public string LogFile { get; private set; }
 
       public volatile SourceLevels LogLevel = SourceLevels.Information;
-      public Func<SourceLevels,string> LevelText { 
-         get { lock( exceptions ) { return _LevelText; } }
-         set { lock( exceptions ) { _LevelText = value; } } }
-      public string TimeFormat { 
+      // Time format, placed at the beginning of every line.
+      public string TimeFormat {
          get { lock( exceptions ) { return _TimeFormat; } }
          set { lock( exceptions ) { _TimeFormat = value; } } }
-      public string Prefix { 
+      // Level format, placed between time and line.
+      public Func<SourceLevels,string> LevelText {
+         get { lock( exceptions ) { return _LevelText; } }
+         set { lock( exceptions ) { _LevelText = value; } } }
+      // String to add to the start of every line on write (not on log).
+      public string Prefix {
          get { lock( exceptions ) { return _Prefix; } }
          set { lock( exceptions ) { _Prefix = value; } } }
-      public string Postfix { 
+      // String to add to the end of every line on write (not on log).
+      public string Postfix {
          get { lock( exceptions ) { return _Postfix; } }
          set { lock( exceptions ) { _Postfix = value; } } }
-      public bool IgnoreDuplicateExceptions { 
+      // Ignores duplicate exception logging (the exception must be the primary logged object, not as a parameter).
+      public bool IgnoreDuplicateExceptions {
          get { lock( exceptions ) { return _IgnoreDuplicateExceptions; } }
          set { lock( exceptions ) { _IgnoreDuplicateExceptions = value; } } }
+      // Handles "environmental" errors such as unable to write or delete log. Does not handle logical errors like log after dispose.
+      public Action<Exception> OnError {
+         get { lock( exceptions ) { return _OnError; } }
+         set { lock( exceptions ) { _OnError = value; } } }
 
       // ============ API ============
 
       public virtual bool Exists () { return File.Exists( LogFile ); }
 
-      public virtual Exception Delete () {
-         if ( LogFile == "Mods/BTModLoader.log" || LogFile == "BattleTech_Data/output_log.txt" )
-            return new ApplicationException( "Cannot delete BTModLoader.log or BattleTech game log." );
+      public virtual void Delete () {
+         if ( BlockDeleteReason != null ) {
+            HandleError( new ApplicationException( "Cannot delete " + LogFile + ": " + BlockDeleteReason ) );
+            return;
+         }
          try {
             File.Delete( LogFile );
-            return null;
-         } catch ( Exception e ) { return e; }
+         } catch ( Exception e ) { HandleError( e ); }
       }
 
       public void Log ( SourceLevels level, object message, params object[] args ) {
@@ -109,6 +123,10 @@ namespace Sheepy.Logging {
 
       // ============ Implementations ============
 
+      private void HandleError ( Exception ex ) { try {
+         lock( exceptions ) { _OnError?.Invoke( ex ); }
+      } catch ( Exception ) { } }
+
       private void WorkerLoop () {
          do {
             int delay = 0;
@@ -116,17 +134,16 @@ namespace Sheepy.Logging {
                if ( worker == null ) return;
                try {
                   if ( queue.Count <= 0 ) Monitor.Wait( queue );
-               } catch ( Exception ) { }
+               } catch ( ThreadInterruptedException ) { }
                delay = writeDelay;
             }
-            if ( delay > 0 ) try {
+            if ( delay > 0 )
                Thread.Sleep( writeDelay );
-            } catch ( Exception ) { }
             Flush();
          } while ( true );
       }
 
-      public void Flush () {
+      public bool? Flush () {
          Func<LogEntry,bool>[] filters;
          LogEntry[] entries;
          lock ( queue ) {
@@ -134,12 +151,11 @@ namespace Sheepy.Logging {
             entries = queue.ToArray();
             queue.Clear();
          }
-         if ( entries.Length > 0 )
-            OutputLog( filters, entries );
+         return OutputLog( filters, entries );
       }
 
-      private void OutputLog ( IEnumerable<Func<LogEntry,bool>> filters, params LogEntry[] entries ) {
-         if ( entries.Length <= 0 ) return;
+      private bool? OutputLog ( IEnumerable<Func<LogEntry,bool>> filters, params LogEntry[] entries ) {
+         if ( entries.Length <= 0 ) return null;
          StringBuilder buf = new StringBuilder();
          lock ( exceptions ) { // Not expecting settings to change frequently. Lock outside format loop for higher throughput.
             foreach ( LogEntry line in entries ) try {
@@ -151,10 +167,13 @@ namespace Sheepy.Logging {
                   if ( ! AllowMessagePass( line, txt ) ) continue;
                   FormatMessage( buf, line, txt );
                }
-               NewLine( buf, line ); // Null or empty message = insert blank new line.
-            } catch ( Exception ex ) { Console.Error.WriteLine( ex ); }
+               NewLine( buf, line );
+            } catch ( Exception ex ) {
+               buf?.Append( Environment.NewLine ); // Clear error'ed line
+               HandleError( ex );
+            }
          }
-         OutputLog( buf );
+         return OutputLog( buf );
       }
 
       // Override to control which message get logged.
@@ -173,8 +192,9 @@ namespace Sheepy.Logging {
          if ( _LevelText != null )
             buf.Append( _LevelText( line.level ) );
          buf.Append( _Prefix );
-         if ( line.args != null && line.args.Length > 0 && txt != null )
+         if ( line.args != null && line.args.Length > 0 && txt != null ) try {
             txt = string.Format( txt, line.args );
+         } catch ( FormatException ) {}
          buf.Append( txt ).Append( _Postfix );
       }
 
@@ -184,13 +204,11 @@ namespace Sheepy.Logging {
       }
 
       // Override to change log output, e.g. to console, system event log, or development environment.
-      protected virtual void OutputLog ( StringBuilder buf ) {
-         try {
-            File.AppendAllText( LogFile, buf.ToString() );
-         } catch ( Exception ex ) {
-            Console.Error.WriteLine( ex );
-         }
-      }
+      protected virtual bool? OutputLog ( StringBuilder buf ) { try {
+         if ( buf.Length <= 0 ) return null;
+         File.AppendAllText( LogFile, buf.ToString() );
+         return true;
+      } catch ( Exception ex ) { HandleError( ex ); return false; } }
 
       public void Dispose () {
          if ( queue != null ) lock ( queue ) {

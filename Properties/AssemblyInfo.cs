@@ -9,7 +9,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("Turbine")]
+[assembly: AssemblyProduct( "BattleTechTurbine" )]
 [assembly: AssemblyCopyright( "Copyright © Yeung Ho Yiu 2018" )]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]

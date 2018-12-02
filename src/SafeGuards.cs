@@ -30,8 +30,8 @@ namespace Sheepy.BattleTechMod.Turbine {
             Patch( typeof( VFXNamesDef ), "get_AllNames", "Override_VFX_get_AllNames", "Cache_VFX_get_AllNames" );
          if ( CacheCombatConst ) {
             // CombatGameConstants can be loaded and reloaded many times.  Cache it for reuse and fix an NPE.
-            Patch( typeof( CombatGameConstants ), "LoadFromManifest", NonPublic, "Override_CombatGameConstants_LoadFromManifest", null );
-            Patch( typeof( CombatGameConstants ), "OnDataLoaded", NonPublic, "Save_CombatGameConstants_Data", null );
+            Patch( typeof( CombatGameConstants ), "LoadFromManifest", "Override_CombatGameConstants_LoadFromManifest", null );
+            Patch( typeof( CombatGameConstants ), "OnDataLoaded", "Save_CombatGameConstants_Data", null );
          }
       }
 

@@ -1,10 +1,10 @@
 ﻿using BattleTech;
 using BattleTech.UI;
 using Harmony;
+using Localize;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
-using Sheepy.Logging;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -16,11 +16,12 @@ using System.Text.RegularExpressions;
 using static System.Reflection.BindingFlags;
 
 namespace Sheepy.BattleTechMod {
+   using Sheepy.Logging;
 
    public abstract class BattleMod : BattleModModule {
 
-      public static readonly Logger BTML_LOG = new Logger( "Mods/BTModLoader.log" );
-      public static readonly Logger BT_LOG = new Logger( "BattleTech_Data/output_log.txt" );
+      public static readonly Logger BTML_LOG = new Logger( "Mods/BTModLoader.log", "BTML log should not be deleted." );
+      public static readonly Logger BT_LOG = new Logger( "BattleTech_Data/output_log.txt", "BattleTech game log should not be deleted." );
 
       // Basic mod info for public access, will auto load from assembly then mod.json (if exists)
       public string Version { get; protected set; } = "Unknown";
@@ -33,8 +34,9 @@ namespace Sheepy.BattleTechMod {
       public void Start ( ref Logger log ) {
          CurrentMod = this;
          TryRun( Setup ); // May be overloaded
-         if ( log != Log ) 
+         if ( log != Log )
             log = Log;
+         log.AddFilter( FormatParameters );
          Add( this );
          PatchBattleMods();
          CurrentMod = null;
@@ -53,12 +55,6 @@ namespace Sheepy.BattleTechMod {
 
       // ============ Setup ============
 
-      /*
-      private static List<BattleMod> modScopes = new List<BattleMod>();
-      private void PushScope () { modScopes.Add( this ); }
-      private void PopScope () { modScopes.RemoveAt( modScopes.Count - 1 ); }
-      internal static BattleMod CurrentMod { get { return modScopes.LastOrDefault(); } }
-      */
       internal static BattleMod CurrentMod;
 
 #pragma warning disable CS0649 // Disable "field never set" warnings since they are set by JsonConvert.
@@ -70,7 +66,7 @@ namespace Sheepy.BattleTechMod {
          Assembly file = GetType().Assembly;
          Id = GetType().Namespace;
          Name = file.GetName().Name;
-         BaseDir = Path.GetDirectoryName( file.Location ) + "/"; 
+         BaseDir = Path.GetDirectoryName( file.Location ) + "/";
          string mod_info_file = BaseDir + "mod.json";
          if ( File.Exists( mod_info_file ) ) TryRun( Log, () => {
             ModInfo info = JsonConvert.DeserializeObject<ModInfo>( File.ReadAllText( mod_info_file ) );
@@ -89,7 +85,7 @@ namespace Sheepy.BattleTechMod {
          Log.Info( "Game Version {0}, Harmony Version {1}" + Environment.NewLine, VersionInfo.ProductVersion, typeof(HarmonyInstance).Assembly.GetName().Version );
       }
 
-      public static string Idify ( string text ) { return Join( string.Empty, new Regex( "\\W+" ).Split( text ), UppercaseFirst ); }
+      public static string Idify ( string text ) { return new Regex( "\\W+" ).Split( text ).Concat( "", UppercaseFirst ); }
 
       protected virtual string GetLogFile () {
          return LogDir + "Log_" + Idify( Name ) + ".txt";
@@ -97,7 +93,7 @@ namespace Sheepy.BattleTechMod {
 
       // Load settings from settings.json, call SanitizeSettings, and create/overwrite it if the content is different.
       protected virtual void LoadSettings <Settings> ( ref Settings settings, Action<Settings> sanitise = null ) {
-         string file = BaseDir + "settings.json", fileText = string.Empty;
+         string file = BaseDir + "settings.json", fileText = "";
          Settings config = settings;
          if ( File.Exists( file ) ) TryRun( () => {
             fileText = File.ReadAllText( file );
@@ -114,7 +110,8 @@ namespace Sheepy.BattleTechMod {
          ThreadPool.QueueUserWorkItem( ( obj ) => {
             string sanitised;
             sanitised = JsonConvert.SerializeObject( obj, Formatting.Indented, new JsonSerializerSettings { ContractResolver = new BattleJsonContract() } );
-            sanitised = Regex.Replace( sanitised, @"(?<=\d\.\d+)0+(?=,\r?\n)", "" );
+            sanitised = Regex.Replace( sanitised, @"(?<=\d)\.0+(?=,\r?\n)", "" ); // Convert 1.0000000000 to 1
+            sanitised = Regex.Replace( sanitised, @"(?<=\d\.\d+)0+(?=,\r?\n)", "" ); // Convert 1.20000000 to 1.2
             Log.Info( "WARNING: Do NOT change settings here. This is just a log." );
             Log.Info( "Loaded Settings: " + sanitised );
             Log.Info( "WARNING: Do NOT change settings here. This is just a log." ); // Yes. It is intentionally repeated.
@@ -127,12 +124,52 @@ namespace Sheepy.BattleTechMod {
          settings = config;
       }
 
-      protected void SaveSettings ( Settings settings_object ) {
+      protected void SaveSettings<Settings> ( Settings settings_object ) {
          SaveSettings( JsonConvert.SerializeObject( settings_object, Formatting.Indented ) );
       }
 
       private void SaveSettings ( string settings ) {
          TryRun( Log, () => File.WriteAllText( BaseDir + "settings.json", settings ) );
+      }
+
+      // ============ Logging ============
+
+      private static bool FormatParameters ( Logger.LogEntry line ) {
+         if ( line == null ) return true;
+         object[] args = line?.args;
+         // Convert Log( data ) to Log( "{0}", data ) so that it can be formatted
+         if ( ! ( line.message is string ) && args.IsNullOrEmpty() && ! ( line.message is Exception ) ) {
+            line.args = args = new object[]{ line.message };
+            line.message = "{0}";
+         } else if ( args == null )
+            return true;
+         // Format parameters
+         for ( int i = 0, len = args.Length ; i < len ; i++ )
+            args[ i ] = FormatParameter( args[i] );
+         return true;
+      }
+
+      public static object FormatParameter ( object arg ) { return FormatParameter( arg, 0 ); }
+      public static object FormatParameter ( object arg, int level ) {
+         if ( arg == null || arg is string || level > 10 ) return arg;
+         if ( arg is UnityEngine.Color color )
+            return "#" + UnityEngine.ColorUtility.ToHtmlStringRGBA( color );
+         if ( arg is UnityEngine.Vector2 vet2 )
+            return "[x" + vet2.x + ",y" + vet2.y + "]";
+         if ( arg is UnityEngine.Vector3 vet3 )
+            return "[x" + vet3.x + ",y" + vet3.y + ",z" + vet3.z + "]";
+         if ( arg is ValueType ) return arg;
+         if ( arg is Text text )
+            return text.ToString( true );
+         if ( arg is ICombatant unit )
+            return unit.DisplayName.ToString() + " (" + unit.GetPilot()?.Callsign + ( unit.team.IsLocalPlayer ? ",PC" : ",NPC" ) + ")";
+         if ( arg is MechComponent comp )
+            return comp.UIName.ToString() + ( string.IsNullOrEmpty( comp.uid ) ? "" : " (#" + comp.uid + ")" );
+         if ( arg is MechComponentDef def )
+            return def.Description.Id;
+         if ( arg is System.Collections.IEnumerable list )
+            return "[" + list.Concat( ", ", e => FormatParameter( e, level + 1 )?.ToString() ) + "]";
+         return arg.ToString();
       }
 
       // ============ Execution ============
@@ -182,7 +219,7 @@ namespace Sheepy.BattleTechMod {
          }
          CallAllModules( module => module.CampaignStarts() );
       }
-      
+
       private static bool CalledCombatStartsOnce = false;
       private static void RunCombatStarts ( CombatHUD __instance ) {
          HUD = __instance;
@@ -197,14 +234,17 @@ namespace Sheepy.BattleTechMod {
 
       private static void RunCombatEnds ( CombatHUD __instance ) {
          CallAllModules( module => module.CombatEnds() );
+         CombatConstants = null;
+         Combat = null;
+         HUD = null;
       }
 
       private static void CallAllModules ( Action<BattleModModule> task ) {
          foreach ( var mod in modules ) {
             foreach ( BattleModModule module in mod.Value ) try {
                task( module );
-            } catch ( Exception ex ) { 
-               mod.Key.Log.Error( ex ); 
+            } catch ( Exception ex ) {
+               mod.Key.Log.Error( ex );
             }
          }
       }
@@ -233,14 +273,14 @@ namespace Sheepy.BattleTechMod {
 
       public static bool FoundMod ( params string[] mods ) {
          if ( modList == null ) GetModList();
-         foreach ( string mod in mods )
-            if ( modList.Contains( mod ) ) return true;
+         for ( int i = 0, len = mods.Length ; i < len ; i++ )
+            if ( modList.Contains( mods[i] ) ) return true;
          return false;
       }
    }
 
    public abstract class BattleModModule {
-      
+
       // Set on GameStarts
       public static GameInstance BattleTechGame { get; internal set; }
       // Set on CampaignStarts
@@ -250,6 +290,8 @@ namespace Sheepy.BattleTechMod {
       public static CombatGameState Combat { get; internal set; }
       public static CombatGameConstants CombatConstants { get; internal set; }
       public static CombatHUD HUD { get; internal set; }
+      public static SelectionState ActiveState { get => HUD?.SelectionHandler?.ActiveState; }
+      public static UIManager uiManager { get => HBS.LazySingletonBehavior<UIManager>.Instance; }
 
       public virtual void ModStarts () {}
       public virtual void GameStartsOnce () { }
@@ -278,18 +320,46 @@ namespace Sheepy.BattleTechMod {
 
       public string Id { get; protected internal set; } = "org.example.mod.module";
       public string Name { get; protected internal set; } = "Module";
-      
+
+      // ============ Logging ============
+
       private Logger _Logger;
       protected Logger Log {
          get { return _Logger ?? BattleMod.BTML_LOG; }
          set { _Logger = value; }
       }
 
+      public void LogGuiTree ( UnityEngine.Component root ) { LogGuiTree( Log, root ); }
+      public static void LogGuiTree ( Logger Log, UnityEngine.Component root ) {
+         StringBuilder buf = new StringBuilder( "GUI Tree:\n" );
+         buf.EnsureCapacity( 1024 * 16 );
+         LogGuiTree( root as UnityEngine.Transform ?? root?.transform, buf, "" );
+         Log.Info( buf.ToString() );
+      }
+
+      // Based on CptMoore's MechEngineer: https://github.com/CptMoore/MechEngineer/blob/v0.8.27/source/Features/MechLabSlots/GUILogUtils.cs#L99
+      public static void LogGuiTree ( UnityEngine.Transform transform, StringBuilder buf, string indent = "" ) {
+         if ( transform == null ) return;
+         Func<object,object> format = BattleMod.FormatParameter;
+         buf.Append( indent ).AppendFormat( transform.name );
+         if ( transform.tag != "Untagged" ) buf.AppendFormat( " #{0}", transform.tag );
+         buf.AppendFormat( " world={0} local={1}", format( transform.position ), format( transform.localPosition ) );
+         if ( transform.GetComponent<UnityEngine.RectTransform>() is UnityEngine.RectTransform rect )
+            buf.AppendFormat( " rect={0} anchor={1}", rect.rect, format( rect.anchoredPosition ) );
+         if ( transform.GetComponent<UnityEngine.MeshRenderer>() is UnityEngine.MeshRenderer mesh )
+            buf.AppendFormat( " mesh={0} material={1} color={2}", mesh.name, mesh.material?.name, format( mesh.material?.color ) );
+         if ( transform.GetComponent<TMPro.TextMeshProUGUI>() is TMPro.TextMeshProUGUI textComponent )
+            buf.AppendFormat( " font={0} color={1} text={2}", textComponent.font?.name, format( textComponent.color ), textComponent.text.Replace( "\n", "\\n" ) );
+         if ( indent.Length > 20 ) return;
+         foreach ( UnityEngine.Transform child in transform )
+            LogGuiTree( child, buf.Append( '\n' ), indent + "   " );
+      }
+
       // ============ Harmony ============
 
       /* Find and create a HarmonyMethod from this class. method must be public and has unique name. */
       protected HarmonyMethod MakePatch ( string method ) {
-         if ( method == null ) return null;
+         if ( string.IsNullOrEmpty( method ) ) return null;
          MethodInfo mi = GetType().GetMethod( method, Static | Public | NonPublic );
          if ( mi == null ) {
             Log.Error( "Cannot find patch method " + method );
@@ -298,29 +368,16 @@ namespace Sheepy.BattleTechMod {
          return new HarmonyMethod( mi );
       }
 
-      protected void Patch ( Type patchedClass, string patchedMethod, string prefix, string postfix ) {
-         Patch( patchedClass, patchedMethod, Public | Instance, (Type[]) null, prefix, postfix );
+      public void Patch ( Type patchedClass, string patchedMethod, string prefix, string postfix, string transpiler = null ) {
+         Patch( patchedClass, patchedMethod, (Type[]) null, prefix, postfix, transpiler );
       }
 
-      protected void Patch ( Type patchedClass, string patchedMethod, Type parameterType, string prefix, string postfix ) {
-         Patch( patchedClass, patchedMethod, Public | Instance, new Type[]{ parameterType }, prefix, postfix );
+      public void Patch ( Type patchedClass, string patchedMethod, Type parameterType, string prefix, string postfix, string transpiler = null ) {
+         Patch( patchedClass, patchedMethod, new Type[]{ parameterType }, prefix, postfix, transpiler );
       }
 
-      protected void Patch ( Type patchedClass, string patchedMethod, Type[] parameterTypes, string prefix, string postfix ) {
-         Patch( patchedClass, patchedMethod, Public | Instance, parameterTypes, prefix, postfix );
-      }
-
-      protected void Patch ( Type patchedClass, string patchedMethod, BindingFlags flags, string prefix, string postfix ) {
-         Patch( patchedClass, patchedMethod, flags, (Type[]) null, prefix, postfix );
-      }
-
-      protected void Patch ( Type patchedClass, string patchedMethod, BindingFlags flags, Type parameterType, string prefix, string postfix ) {
-         Patch( patchedClass, patchedMethod, flags, new Type[]{ parameterType }, prefix, postfix );
-      }
-
-      protected void Patch ( Type patchedClass, string patchedMethod, BindingFlags flags, Type[] parameterTypes, string prefix, string postfix ) {
-         if ( ( flags & ( Static | Instance  ) ) == 0  ) flags |= Instance;
-         if ( ( flags & ( Public | NonPublic ) ) == 0  ) flags |= Public;
+      public void Patch ( Type patchedClass, string patchedMethod, Type[] parameterTypes, string prefix, string postfix, string transpiler = null ) {
+         BindingFlags flags = Public | NonPublic | Instance | Static;
          MethodInfo patched = null;
          Exception ex = null;
          try {
@@ -333,21 +390,21 @@ namespace Sheepy.BattleTechMod {
             Log.Error( "Cannot find {0}.{1}(...) to patch {2}", patchedClass.Name, patchedMethod, ex );
             return;
          }
-         Patch( patched, prefix, postfix );
+         Patch( patched, prefix, postfix, transpiler );
       }
 
-      protected void Patch ( MethodBase patched, string prefix, string postfix ) {
-         HarmonyMethod pre = MakePatch( prefix ), post = MakePatch( postfix );
-         if ( pre == null && post == null ) return; // MakePatch would have reported method not found
-         Patch( patched, pre, post );
+      public void Patch ( MethodBase patched, string prefix, string postfix, string transpiler = null ) {
+         HarmonyMethod pre = MakePatch( prefix ), post = MakePatch( postfix ), trans = MakePatch( transpiler );
+         if ( AllNull( pre, post, trans ) ) return; // MakePatch would have reported method not found
+         Patch( patched, pre, post, trans );
       }
 
-      protected void Patch ( MethodBase patched, MethodInfo prefix, MethodInfo postfix ) {
-         Patch( patched, new HarmonyMethod( prefix ), new HarmonyMethod( postfix ) );
+      public void Patch ( MethodBase patched, MethodInfo prefix, MethodInfo postfix, MethodInfo transpiler = null ) {
+         Patch( patched, new HarmonyMethod( prefix ), new HarmonyMethod( postfix ), new HarmonyMethod( transpiler ) );
       }
 
-      protected void Patch ( MethodBase patched, HarmonyMethod prefix, HarmonyMethod postfix ) {
-         string pre = prefix?.method?.Name, post = postfix?.method?.Name;
+      public void Patch ( MethodBase patched, HarmonyMethod prefix, HarmonyMethod postfix, HarmonyMethod transpiler = null ) {
+         string pre = prefix?.method?.Name, post = postfix?.method?.Name, trans = transpiler?.method?.Name;
          if ( patched == null ) {
             Log.Error( "Method not found. Cannot patch [ {0} : {1} ]", pre, post );
             return;
@@ -356,14 +413,44 @@ namespace Sheepy.BattleTechMod {
             Mod.ModHarmony = HarmonyInstance.Create( Id );
             Log.Info( "Harmony instance \"{0}\"", Id );
          }
-         Mod.ModHarmony.Patch( patched, prefix, postfix );
-         Log.Verbo( "Patched: {0} {1} [ {2} : {3} ]", patched.DeclaringType, patched, pre, post );
+         Mod.ModHarmony.Patch( patched, prefix, postfix, transpiler );
+         Log.Verbo( "Patched: {0} {1} [ {2} : {3} : {4} ]", patched.DeclaringType, patched, pre, post, trans );
+      }
+
+      public static IEnumerable<CodeInstruction> LogIL ( IEnumerable<CodeInstruction> input, Logger logger ) {
+         List<CodeInstruction> result = new List<CodeInstruction>( 100 );
+         int index = 0;
+         foreach ( CodeInstruction code in input ) {
+            logger.Info( "{0,3} {1}", index++, code );
+            result.Add( code );
+         }
+         return result;
+      }
+
+      public static IEnumerable<CodeInstruction> ReplaceIL ( IEnumerable<CodeInstruction> input, Func<CodeInstruction,bool> matcher, Func<CodeInstruction,CodeInstruction> replacer, int limit = 0, string action = "anonymous transpiler", Logger logger = null ) {
+         int found = 0;
+         List<CodeInstruction> result = new List<CodeInstruction>( 100 );
+         foreach ( CodeInstruction code in input ) {
+            if ( ( limit <= 0 || found < limit ) && matcher( code ) ) {
+               result.Add( replacer( code ) );
+               ++found;
+            } else
+               result.Add( code );
+         }
+         if ( found == 0 )
+            ( logger ?? BattleMod.BTML_LOG ).Warn( "Cannot found IL code to replace for {0}.", action );
+         return result;
       }
 
       // ============ UTILS ============
-         
+
+      public static string Translate ( string s, params object[] augs ) {
+         if ( augs == null ) augs = new object[0];
+         return new Text( s, augs ).ToString( true );
+      }
+
       public static string UppercaseFirst ( string s ) {
-         if ( string.IsNullOrEmpty( s ) ) return string.Empty;
+         if ( string.IsNullOrEmpty( s ) ) return "";
          return char.ToUpper( s[ 0 ] ) + s.Substring( 1 );
       }
 
@@ -374,16 +461,6 @@ namespace Sheepy.BattleTechMod {
          return new StringBuilder( tLen - sLen + replace.Length )
             .Append( text, 0, pos ).Append( replace ).Append( text, sEnd, tLen - sEnd )
             .ToString();
-      }
-
-      public static string Join<T> ( string separator, IEnumerable<T> list, Func<T,string> formatter = null ) {
-         if ( list == null ) return string.Empty;
-         StringBuilder result = new StringBuilder();
-         foreach ( T e in list ) {
-            if ( result.Length > 0 ) result.Append( separator );
-            result.Append( formatter == null ? e?.ToString() : formatter( e ) );
-         }
-         return result.ToString();
       }
 
       public static string NullIfEmpty ( ref string value ) {
@@ -397,7 +474,7 @@ namespace Sheepy.BattleTechMod {
          action.Invoke();
       } catch ( Exception ex ) { log.Error( ex ); } }
 
-      public static T TryGet<T> ( T[] array, int index, T fallback = default(T), string errorArrayName = null ) {
+      public static T TryGet<T> ( T[] array, int index, T fallback = default, string errorArrayName = null ) {
          if ( array == null || array.Length <= index ) {
             if ( errorArrayName != null ) BattleMod.BTML_LOG.Warn( $"{errorArrayName}[{index}] not found, using default {fallback}." );
             return fallback;
@@ -405,7 +482,15 @@ namespace Sheepy.BattleTechMod {
          return array[ index ];
       }
 
-      public static V TryGet<T,V> ( Dictionary<T, V> map, T key, V fallback = default(V), string errorDictName = null ) {
+      public static T TryGet<T> ( List<T> list, int index, T fallback = default, string errorArrayName = null ) {
+         if ( list == null || list.Count <= index ) {
+            if ( errorArrayName != null ) BattleMod.BTML_LOG.Warn( $"{errorArrayName}[{index}] not found, using default {fallback}." );
+            return fallback;
+         }
+         return list[ index ];
+      }
+
+      public static V TryGet<T,V> ( Dictionary<T, V> map, T key, V fallback = default, string errorDictName = null ) {
          if ( map == null || ! map.ContainsKey( key ) ) {
             if ( errorDictName != null ) BattleMod.BTML_LOG.Warn( $"{errorDictName}[{key}] not found, using default {fallback}." );
             return fallback;
@@ -413,7 +498,19 @@ namespace Sheepy.BattleTechMod {
          return map[ key ];
       }
 
-      public static T ValueCheck<T> ( ref T value, T fallback = default(T), Func<T,bool> validate = null ) {
+      public static bool AllNull<T> ( params T[] objects ) {
+         for ( int i = objects.Length - 1 ; i >= 0 ; i-- )
+            if ( objects[ i ] != null ) return false;
+         return true;
+      }
+
+      public static bool AnyNull<T> ( params T[] objects ) {
+         for ( int i = objects.Length - 1 ; i >= 0 ; i-- )
+            if ( objects[ i ] == null ) return true;
+         return false;
+      }
+
+      public static T ValueCheck<T> ( ref T value, T fallback = default, Func<T,bool> validate = null ) {
          if ( value == null ) value = fallback;
          else if ( validate != null && ! validate( value ) ) value = fallback;
          return value;
@@ -452,20 +549,52 @@ namespace Sheepy.BattleTechMod {
       }
    }
 
+   public static class BattleModExtensions {
+
+      public static bool IsNullOrEmpty ( this Array array ) {
+          return array == null || array.Length <= 0;
+      }
+
+      public static bool IsNullOrEmpty ( this System.Collections.ICollection collection ) {
+          return collection == null || collection.Count <= 0;
+      }
+
+      public static string Concat ( this System.Collections.IEnumerable list, string separator = ", ", Func<object,string> formatter = null ) {
+         if ( list == null ) return "";
+         StringBuilder result = new StringBuilder();
+         foreach ( object e in list ) {
+            if ( result.Length > 0 ) result.Append( separator );
+            result.Append( formatter == null ? e?.ToString() : formatter( e ) );
+         }
+         return result.ToString();
+      }
+
+      public static string Concat<TSource> ( this IEnumerable<TSource> list, string separator = ", ", Func<TSource,string> formatter = null ) {
+         if ( list == null ) return "";
+         StringBuilder result = new StringBuilder();
+         foreach ( TSource e in list ) {
+            if ( result.Length > 0 ) result.Append( separator );
+            result.Append( formatter == null ? e?.ToString() : formatter( e ) );
+         }
+         return result.ToString();
+      }
+
+   }
+
    //
    // JSON serialisation
    //
 
-   [ AttributeUsage( AttributeTargets.Field | AttributeTargets.Property, Inherited = true, AllowMultiple = false ) ]
+   [AttributeUsage( AttributeTargets.Field | AttributeTargets.Property, Inherited = true, AllowMultiple = false ) ]
    public class JsonSection : Attribute {
       public string Section;
-      public JsonSection ( string section ) { Section = section ?? string.Empty; }
+      public JsonSection ( string section ) { Section = section ?? ""; }
    }
 
    [ AttributeUsage( AttributeTargets.Field | AttributeTargets.Property, Inherited = true, AllowMultiple = false ) ]
    public class JsonComment : Attribute {
       public string[] Comments;
-      public JsonComment ( string comment ) { Comments = comment?.Split( '\n' ) ?? new string[]{ string.Empty }; }
+      public JsonComment ( string comment ) { Comments = comment?.Split( '\n' ) ?? new string[]{ "" }; }
       public JsonComment ( string[] comments ) { Comments = comments ?? new string[]{}; }
    }
 
