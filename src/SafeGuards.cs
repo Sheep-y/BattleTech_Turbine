@@ -13,18 +13,12 @@ namespace Sheepy.BattleTechMod.Turbine {
 
    public class SafeGuards : BattleModModule {
 
-      // Block processing of empty and repeated DataManagerRequestCompleteMessages
-      private const bool FilterNullAndRepeatedMessage = true;
-
       // Cache some game properties to work around NPE of unknown cause.
       private const bool CacheVFXNames = true;
       private const bool CacheCombatConst = true;
 
       public override void ModStarts () {
          Verbo( "Some simple filters and safety shield first." );
-         // A pretty safe filter that disables invalid or immediately duplicating complete messages.
-         if ( FilterNullAndRepeatedMessage )
-            Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, nameof( Skip_DuplicateRequestCompleteMessage ) );
          // Fix VFXNames.AllNames NPE
          if ( CacheVFXNames )
             Patch( typeof( VFXNamesDef ), "get_AllNames", nameof( Override_VFX_get_AllNames ), nameof( Cache_VFX_get_AllNames ) );
@@ -35,23 +29,6 @@ namespace Sheepy.BattleTechMod.Turbine {
          }
       }
 
-      private static BattleTechResourceType lastResourceType;
-      private static string lastIdentifier;
-
-      public static void Skip_DuplicateRequestCompleteMessage ( DataManagerRequestCompleteMessage __instance ) {
-         if ( String.IsNullOrEmpty( __instance.ResourceId ) ) {
-            __instance.hasBeenPublished = true; // Skip publishing empty id
-            return;
-         }
-         if ( lastIdentifier == __instance.ResourceId && lastResourceType == __instance.ResourceType ) {
-            if ( DebugLog ) Verbo( "Skipping successive DataManagerRequestCompleteMessage {0} {1}", __instance.ResourceType, __instance.ResourceId );
-            __instance.hasBeenPublished = true;
-         } else {
-            lastIdentifier = __instance.ResourceId;
-            lastResourceType = __instance.ResourceType;
-         }
-      }
-      
       public static byte[] CombatConstantJSON;
       private static MethodInfo LoadMoraleResources, LoadMaintenanceResources;
 

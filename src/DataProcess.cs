@@ -29,12 +29,12 @@ namespace Sheepy.BattleTechMod.Turbine {
 
       public override void ModStarts () {
          if ( StripJSON )
-            Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", "Override_StripComments", null );
+            Patch( typeof( HBS.Util.JSONSerializationUtility ), "StripHBSCommentsFromJSON", nameof( Override_StripComments ), null );
          if ( MultiThreadHash )
             Patch( typeof( DataManager ), "GetDataHash", "MultiThreadDataHash", null );
          if ( OptimiseCsvReadRow ) {
             csvField = new Regex( "((?<=\\\")(?>[^\\\"]*)(?=\\\"(,|$)+)|(?<=,|^)(?>[^,\\\"]*)(?=,|$))", RegexOptions.Multiline | RegexOptions.Compiled );
-            Patch( typeof( CSVReader ), "ReadRow", new Type[]{}, "Override_CSVReader_ReadRow", null );
+            Patch( typeof( CSVReader ), "ReadRow", new Type[]{}, nameof( Override_CSVReader_ReadRow ), null );
          }
       }
 

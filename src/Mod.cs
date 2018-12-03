@@ -9,6 +9,9 @@ namespace Sheepy.BattleTechMod.Turbine {
 
    public class Mod : BattleMod {
 
+      // Block processing of empty and repeated DataManagerRequestCompleteMessages
+      private const bool FilterNullAndRepeatedMessage = true;
+
       // A kill switch to press when any things go wrong during initialisation.
       // Default true and set to false after initial patch success.  Also set to true after any exception.
       private static bool UnpatchManager = true;
@@ -29,6 +32,8 @@ namespace Sheepy.BattleTechMod.Turbine {
          logger = HBS.Logging.Logger.GetLogger( "Data.DataManager" );
          Patch( dmType, "ProcessRequests", nameof( Override_ProcessRequests ), null );
          Patch( dmType, "RequestResource_Internal", nameof( Prefix_RequestResource_Internal ), null );
+         if ( FilterNullAndRepeatedMessage )
+            Patch( typeof( DataManagerRequestCompleteMessage ).GetConstructors()[0], null, nameof( Skip_DuplicateRequestCompleteMessage ) );
          UnpatchManager = false;
          Info( "Turbine initialised" );
 
@@ -42,7 +47,24 @@ namespace Sheepy.BattleTechMod.Turbine {
          Info( "Mods found: " + BattleMod.GetModList().Concat() );
       }
 
-      // ============ Compressor & Turbine - the main rewrite ============
+      private static BattleTechResourceType lastCompleteType;
+      private static string lastComplete;
+
+      public static void Skip_DuplicateRequestCompleteMessage ( DataManagerRequestCompleteMessage __instance ) {
+         if ( String.IsNullOrEmpty( __instance.ResourceId ) ) {
+            __instance.hasBeenPublished = true; // Skip publishing empty id
+            return;
+         }
+         if ( lastComplete == __instance.ResourceId && lastCompleteType == __instance.ResourceType ) {
+            if ( DebugLog ) Verbo( "Skipping successive DataManagerRequestCompleteMessage {0} {1}", __instance.ResourceType, __instance.ResourceId );
+            __instance.hasBeenPublished = true;
+         } else {
+            lastComplete = __instance.ResourceId;
+            lastCompleteType = __instance.ResourceType;
+         }
+      }
+      
+      // ============ ProcessRequest loop ============
 
       // Cache or access to original manager states
       private static HBS.Logging.ILog logger;
