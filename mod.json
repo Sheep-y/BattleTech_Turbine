@@ -1,0 +1,9 @@
+{
+    "Name": "Turbine",
+    "DLL": "Turbine.dll",
+
+    "Version": "2.0.0",
+    "Description": "Speed up game loading.",
+    "Author": "Sheepy",
+    "Website": "https://github.com/Sheep-y/BattleTech_Turbine/"
+}
